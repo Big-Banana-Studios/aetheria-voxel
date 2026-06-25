@@ -53,6 +53,28 @@ export function emptyBandPower(): BandPowerResult {
   };
 }
 
+/**
+ * A snapshot of all relevant Muse S Athena metrics for the session metrics panel.
+ * These are RAW measured signals (honest-claims rule) — never an attainment score.
+ */
+export interface MuseMetrics {
+  connected: boolean;
+  quality: ChannelQuality;
+  deltaRel: number;
+  thetaRel: number;
+  alphaRel: number;
+  betaRel: number;
+  gammaRel: number;
+  thetaAlphaRatio: number; // relaxation index
+  betaGammaRatio: number; // focus index
+  plvCoherence: number; // inter-channel phase-locking (0..1)
+  stillness: number; // accelerometer relative stillness (0..1)
+  heartRate: number | null; // PPG bpm
+  hbo: number | null; // fNIRS oxy-haemoglobin (μM)
+  hbr: number | null; // fNIRS deoxy-haemoglobin (μM)
+  battery: number | null; // %
+}
+
 export type EEGEvent =
   | 'eegData'
   | 'frequencyChanged'

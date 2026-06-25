@@ -129,11 +129,10 @@ export class TemplateLevel extends LevelBase {
       this.addProp(flora);
     });
 
-    // 5. Audio config. The audio engine sounds the FELT (octave-folded)
-    // frequency so the tone is felt rather than heard; the true Aetheria Hz
-    // remains the canonical identity used for display and digital roots.
+    // 5. Audio config. The felt carrier is the octave-folded frequency; the
+    // canonical TRUE Hz drives the sub-bass grounding tone (5–12 Hz).
     this.ctx.audio.setBinauralOffset(cfg.binauralBeatOffset);
-    this.ctx.audio.setFrequency(cfg.playbackHz);
+    this.ctx.audio.setFrequency(cfg.frequencyHz, cfg.playbackHz);
 
     // Opening narrative beat.
     this.ctx.speak(this.openingLine());
@@ -152,8 +151,9 @@ export class TemplateLevel extends LevelBase {
   }
 
   onFrequencyPrescribed(freqIndex: number): void {
-    const hz = this.ctx.freqTable.playbackHz(freqIndex);
-    if (hz > 0) this.ctx.audio.setFrequency(hz);
+    const carrier = this.ctx.freqTable.playbackHz(freqIndex);
+    const trueHz = this.ctx.freqTable.hz(freqIndex);
+    if (carrier > 0) this.ctx.audio.setFrequency(trueHz, carrier);
   }
 
   onMeditationSpaceEntered(): void {
@@ -163,6 +163,8 @@ export class TemplateLevel extends LevelBase {
   onLevelComplete(): void {
     this.ctx.speak(this.completionLine());
     this.ctx.audio.chime(432 * 1.5, 1.4);
+    // Gentle hint that the honest session metrics are available.
+    setTimeout(() => this.ctx.speak('Press V to see your session metrics, or choose your next node on the cube.'), 5000);
   }
 
   get allPuzzlesSolved(): boolean {

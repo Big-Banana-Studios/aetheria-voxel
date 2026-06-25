@@ -30,8 +30,9 @@ runs Manual Mode.
 - **M** — enter/leave Meditation stance
 - **1–9** — (Manual Mode) select a frequency within the regime
 - **C** — open the Lo Shu cube (hero view); click an unlocked node to travel
+- **V** — session metrics (measured Athena/Polar signals · sparklines · export)
 - **`** (backtick) — toggle the EEG debug overlay
-- **Esc** — pause (settings · return to title)
+- **Esc** — pause (session metrics · settings · return to title)
 
 ## Architecture (maps to GDD Section 4.1)
 
@@ -92,6 +93,23 @@ the EEG/behaviour coherence (heart leads in Manual Mode, EEG leads with a Muse).
 - **Manual Mode is first-class** — a complete path for players without a headset.
 - **Coherence Lab code is reused**, not re-derived (FFT/PSD/coherence ported
   from `athena-core.js` / `spiral-wave.js`).
+
+## Sound design (canonical)
+
+Per `../SUB_BASS_IMPLEMENTATION.md`, audio is a unified stack: the felt carrier
+(octave-folded into ~27–110 Hz), the binaural beat (~3–5%, golden offset), the
+harmonic series, and a **canonical sub-bass grounding tone** — the true frequency
+octave-divided into the **theta–alpha regulation zone (5–12 Hz)**, harmonically
+locked (same pitch-class), with a slow LFO amplitude-modulation breath. e.g.
+528 → 8.25 Hz (α), 2178 → 8.51 Hz. A = 432 Hz throughout.
+
+## Session metrics (honest Data mode)
+
+Press **V** (or pause → Session Metrics, or on level complete) for every relevant
+Muse S Athena + Polar signal — EEG band powers, θ/α and β/γ ratios, inter-channel
+PLV, accelerometer stillness, HR, HRV (RMSSD), fNIRS HbO/HbR, battery — each as
+last/mean/min/max with a sparkline, exportable as JSON. These are **measured
+signals, never a score**; the panel says so.
 
 ## Honest signals (Selah's guide)
 

@@ -12,6 +12,7 @@ export interface MenuCallbacks {
   onEnter: () => void; // begin / continue → sensor choice
   onResume: () => void;
   onMainMenu: () => void; // return to title from pause
+  onMetrics: () => void; // open the session metrics panel
 }
 
 export class MenuSystem {
@@ -89,11 +90,13 @@ export class MenuSystem {
     this.panel.appendChild(h);
     const resume = this.btn('Resume', true);
     resume.onclick = () => this.cb.onResume();
+    const metrics = this.btn('Session Metrics');
+    metrics.onclick = () => this.cb.onMetrics();
     const settings = this.btn('Settings');
     settings.onclick = () => this.showSettings(() => this.showPause());
     const main = this.btn('Return to Title');
     main.onclick = () => this.cb.onMainMenu();
-    this.panel.append(resume, settings, main);
+    this.panel.append(resume, metrics, settings, main);
     this.show();
   }
 

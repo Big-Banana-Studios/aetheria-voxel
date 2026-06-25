@@ -16,12 +16,28 @@ export interface AthenaAccGyroData {
   count: number;
 }
 
+/** PPG result (pulse): heart rate + signal quality. */
+export interface AthenaPPG {
+  heartRate: number;
+  sqi: number;
+  nChannels: number;
+}
+
+/** fNIRS result (tissue oxygenation): last HbO/HbR in μM. */
+export interface AthenaFNIRS {
+  lastHbO: number;
+  lastHbR: number;
+  sqi: number;
+}
+
 export interface AthenaOptions {
   preset?: string;
   dcOffset?: boolean;
   processInterval?: number;
   onEEG?: (d: AthenaEEGData) => void;
   onAccGyro?: (d: AthenaAccGyroData) => void;
+  onPPG?: (d: unknown) => void;
+  onFNIRS?: (d: unknown) => void;
   onBandPowers?: (bp: Record<string, number>) => void;
   onBattery?: (pct: number) => void;
   onStatus?: (s: string) => void;
@@ -37,6 +53,9 @@ export declare class AthenaDevice {
   get status(): string;
   get battery(): number | null;
   get deviceName(): string | null;
+  get ppg(): AthenaPPG | null;
+  get fnirs(): AthenaFNIRS | null;
+  get bandPowers(): Record<string, number> | null;
   static get isSupported(): boolean;
 }
 

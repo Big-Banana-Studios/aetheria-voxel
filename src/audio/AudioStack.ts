@@ -15,6 +15,7 @@
  */
 import { Oscillator } from './Oscillator';
 import { BinauralBeat } from './BinauralBeat';
+import { SubBass, type SubBassState, type SubBassMode } from './SubBass';
 
 export class AudioStack {
   readonly ctx: AudioContext;
@@ -23,10 +24,12 @@ export class AudioStack {
   private base: Oscillator;
   private binaural: BinauralBeat;
   private harmonics: Oscillator[] = [];
+  private subBass: SubBass;
   private ambientGain: GainNode;
   private ambientSource: AudioBufferSourceNode | null = null;
 
-  private currentHz = 0;
+  private currentHz = 0; // felt carrier (octave-folded)
+  private currentTrueHz = 0; // canonical Aetheria frequency
   private coherence = 0;
   private masterVolume = 0.6;
   private running = false;
@@ -47,6 +50,8 @@ export class AudioStack {
     for (let i = 0; i < 3; i++) {
       this.harmonics.push(new Oscillator(this.ctx, this.master, 0, 'sine'));
     }
+    // Canonical sub-bass grounding tone (5–12 Hz theta-alpha, octave-locked).
+    this.subBass = new SubBass(this.ctx, this.master);
     // L4 ambient bed.
     this.ambientGain = this.ctx.createGain();
     this.ambientGain.gain.value = 0;
@@ -60,9 +65,19 @@ export class AudioStack {
     this.base.start();
     this.binaural.start();
     for (const h of this.harmonics) h.start();
+    this.subBass.start();
     this.startAmbientBed();
     this.running = true;
     this.applyMix();
+  }
+
+  setSubBassMode(mode: SubBassMode): void {
+    this.subBass.setMode(mode);
+  }
+
+  /** The active audio state, for the metrics/UI readout (canonical display). */
+  getAudioState(): { trueHz: number; carrierHz: number; subBass: SubBassState } {
+    return { trueHz: this.currentTrueHz, carrierHz: this.currentHz, subBass: this.subBass.getState() };
   }
 
   setMasterVolume(v: number): void {
@@ -74,13 +89,20 @@ export class AudioStack {
     this.binaural.setOffset(hz);
   }
 
-  /** Wire the prescribed frequency → all pitched layers (Section 5.1). */
-  setFrequency(hz: number): void {
-    this.currentHz = hz;
-    this.base.setFrequency(hz);
-    this.binaural.setCarrier(hz);
+  /**
+   * Wire the prescribed frequency → all pitched layers (Section 5.1).
+   * @param trueHz  the canonical Aetheria frequency (drives the sub-bass)
+   * @param carrierHz  the felt, octave-folded carrier (drives base/binaural/harmonics)
+   */
+  setFrequency(trueHz: number, carrierHz: number): void {
+    this.currentTrueHz = trueHz;
+    this.currentHz = carrierHz;
+    this.base.setFrequency(carrierHz);
+    this.binaural.setCarrier(carrierHz);
     const mults = [2, 3, 5];
-    this.harmonics.forEach((h, i) => h.setFrequency(hz > 0 ? hz * mults[i] : 0));
+    this.harmonics.forEach((h, i) => h.setFrequency(carrierHz > 0 ? carrierHz * mults[i] : 0));
+    // Sub-bass derives its 5–12 Hz grounding tone from the TRUE frequency.
+    this.subBass.setFrequency(trueHz);
     this.applyMix();
   }
 
@@ -101,8 +123,9 @@ export class AudioStack {
     // L1 base swells from quiet to present.
     this.base.setAmplitude(silent ? 0 : 0.05 + 0.22 * c);
 
-    // L2 binaural fades in after ~0.2.
-    const binAmt = silent ? 0 : Math.max(0, (c - 0.2) / 0.8) * 0.18;
+    // L2 binaural fades in after ~0.2 — kept subtle (~3–5%, canonical; needs
+    // headphones to be perceived as a beat rather than a hum).
+    const binAmt = silent ? 0 : Math.max(0, (c - 0.2) / 0.8) * 0.05;
     this.binaural.setAmplitude(binAmt);
 
     // L3 harmonics emerge after ~0.4 (2× strongest, then 3×, 5×).
@@ -168,6 +191,7 @@ export class AudioStack {
     this.base.stop();
     this.binaural.stop();
     for (const h of this.harmonics) h.stop();
+    this.subBass.stop();
     if (this.ambientSource) {
       try { this.ambientSource.stop(); } catch { /* noop */ }
     }

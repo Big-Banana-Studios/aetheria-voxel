@@ -32,6 +32,9 @@ import { SignalLog } from './SignalLog';
 import { SaveSystem } from './SaveSystem';
 import { Settings, DIFFICULTY_SCALE } from './Settings';
 import { MenuSystem } from '../ui/Menus';
+import { MetricsTracker } from './MetricsTracker';
+import { MetricsPanel } from '../ui/MetricsPanel';
+import { SetupScreen } from '../ui/SetupScreen';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -79,8 +82,11 @@ export class Game {
   private settings = new Settings();
   private save = new SaveSystem();
   private menus!: MenuSystem;
-  // Shell state: 'menu' title, 'setup' sensor choice, 'playing', 'paused', 'map'.
-  private state: 'menu' | 'setup' | 'playing' | 'paused' | 'map' | 'complete' = 'menu';
+  private metrics = new MetricsTracker();
+  private metricsPanel!: MetricsPanel;
+  private setup!: SetupScreen;
+  // Shell state machine.
+  private state: 'menu' | 'setup' | 'playing' | 'paused' | 'map' | 'complete' | 'metrics' = 'menu';
 
   constructor(private opts: GameOptions) {
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: 'high-performance' });
@@ -133,12 +139,20 @@ export class Game {
     this.completedLevels = this.save.completedSet;
     this.recomputeUnlocked();
 
-    // Menus + settings.
+    // Menus + settings + metrics panel.
     this.menus = new MenuSystem(this.opts.hud, this.settings, this.save, {
       onEnter: () => this.enterFromMenu(),
       onResume: () => this.resume(),
       onMainMenu: () => this.showMainMenu(),
+      onMetrics: () => this.metricsPanel.show(this.metrics),
     });
+    this.metricsPanel = new MetricsPanel(this.opts.hud);
+    this.metricsPanel.onExport = () => this.downloadSignalLog();
+    this.setup = new SetupScreen(this.opts.hud);
+    this.metricsPanel.onClose = () => {
+      // Returning from metrics while in the Field re-locks the cursor.
+      if (this.state === 'metrics') { this.state = 'playing'; this.requestPlay(); }
+    };
     this.settings.onChange((s) => this.applySettings(s));
 
     // Player.
@@ -159,6 +173,8 @@ export class Game {
       if (!this.usingMuse && n >= 1 && n <= 9) this.manual.selectFrequency(n - 1);
       // C peeks the Lo Shu cube (hero view) — releases the cursor to navigate.
       if (e.code === 'KeyC') this.toggleCube();
+      // V opens the session metrics (honest measured-signal view).
+      if (e.code === 'KeyV') this.toggleMetrics();
     });
 
     // Build the level behind the menu (continue point, or GUT-1 to start).
@@ -210,6 +226,7 @@ export class Game {
     this.level = level;
     this.world.remeshDirty();
     this.recomputeUnlocked();
+    this.metrics.start(index, config.levelName, performance.now());
   }
 
   // ── Progression: completed set, unlock logic, cube navigation ──
@@ -270,6 +287,20 @@ export class Game {
     this.loadLevel(index);
     this.state = 'playing';
     this.requestPlay();
+  }
+
+  private toggleMetrics(): void {
+    if (this.metricsPanel.isVisible) {
+      this.metricsPanel.hide();
+      if (this.state === 'metrics') { this.state = 'playing'; this.requestPlay(); }
+    } else if (this.state === 'playing') {
+      // Set state before unlocking so the unlock doesn't trigger the pause menu.
+      this.state = 'metrics';
+      this.player.unlock();
+      this.metricsPanel.show(this.metrics);
+    } else if (this.state === 'paused' || this.state === 'complete') {
+      this.metricsPanel.show(this.metrics); // cursor already free
+    }
   }
 
   private toggleCube(): void {
@@ -354,6 +385,7 @@ export class Game {
 
   private beginPlay(): void {
     this.hud.hideSetupBar();
+    this.setup.hide();
     this.state = 'playing';
     this.requestPlay();
     // Honest note: the healing tones are felt more than heard (sub-bass), so
@@ -373,7 +405,7 @@ export class Game {
     this.menus.showMain();
   }
 
-  /** From the title's "Enter the Field": choose a sensor, then play. */
+  /** From the title's "Enter the Field": guided sensor setup + calibration. */
   private enterFromMenu(): void {
     this.menus.hide();
     this.state = 'setup';
@@ -381,7 +413,13 @@ export class Game {
     if (this.level && this.completedLevels.has(this.level.levelIndex)) {
       this.loadLevel(this.continueIndex());
     }
-    this.hud.showSetupBar();
+    this.setup.open({
+      connectMuse: async () => { this.usingMuse = await this.muse.connect(); return this.usingMuse; },
+      connectPolar: () => this.polar.connect(),
+      startCalibration: () => { this.muse.startCalibration(30); this.polar.captureBaseline(); },
+      enter: () => this.beginPlay(),
+      manual: () => this.startManual(),
+    });
   }
 
   private pause(): void {
@@ -441,6 +479,11 @@ export class Game {
   }
 
   private update(dt: number): void {
+    // Live setup-screen feedback (signal bars + calibration countdown).
+    if (this.state === 'setup' && this.setup.isVisible) {
+      this.setup.update(dt, this.muse.getChannelQuality(), this.muse.calibrationProgress);
+    }
+
     // Player movement (only when locked / playing).
     if (this.playing) this.player.update(dt);
 
@@ -490,6 +533,27 @@ export class Game {
     if (this.logAccum >= 1 && this.level) {
       this.logAccum = 0;
       const entry = this.freqTable.get(freqIndex);
+
+      // Feed the session metrics tracker (all Athena + Polar signals).
+      const mm = this.muse.getMetrics();
+      this.metrics.push({
+        settledness: coherence,
+        heartRate: this.polar.heartRate || mm.heartRate,
+        hrvRmssd: this.polar.getRmssd(),
+        plvCoherence: this.usingMuse ? mm.plvCoherence : null,
+        stillness: this.usingMuse ? mm.stillness : null,
+        thetaAlpha: this.usingMuse ? mm.thetaAlphaRatio : null,
+        betaGamma: this.usingMuse ? mm.betaGammaRatio : null,
+        alphaRel: this.usingMuse ? mm.alphaRel : null,
+        thetaRel: this.usingMuse ? mm.thetaRel : null,
+        betaRel: this.usingMuse ? mm.betaRel : null,
+        gammaRel: this.usingMuse ? mm.gammaRel : null,
+        deltaRel: this.usingMuse ? mm.deltaRel : null,
+        hbo: mm.hbo,
+        hbr: mm.hbr,
+        battery: mm.battery,
+      });
+
       this.signalLog.push({
         t: Math.round(this.level.timeInLevel * 1000),
         source: this.usingMuse && this.muse.isConnected ? 'muse' : 'manual',

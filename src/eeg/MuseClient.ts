@@ -19,6 +19,7 @@ import {
   type EEGEvent,
   type EEGSample,
   type ChannelQuality,
+  type MuseMetrics,
   emptyBandPower,
 } from './types';
 import type { FrequencyTable } from '../core/FrequencyTable';
@@ -115,6 +116,11 @@ export class MuseClient implements CoherenceSource {
     return (q.tp9 + q.af7 + q.af8 + q.tp10) / 4;
   }
 
+  /** Per-electrode signal quality (0..1) for the setup screen's 4 bars. */
+  getChannelQuality(): ChannelQuality {
+    return { ...this.quality };
+  }
+
   // ── Calibration ──
 
   startCalibration(seconds = 30): void {
@@ -147,6 +153,29 @@ export class MuseClient implements CoherenceSource {
   }
   get hasStillness(): boolean {
     return this.stillness.hasBaseline;
+  }
+
+  /** Full Athena metrics snapshot for the session metrics panel (raw signals). */
+  getMetrics(): MuseMetrics {
+    const ppg = this.device?.ppg ?? null;
+    const fnirs = this.device?.fnirs ?? null;
+    return {
+      connected: this.connected,
+      quality: this.quality,
+      deltaRel: this.bands.deltaRel,
+      thetaRel: this.bands.thetaRel,
+      alphaRel: this.bands.alphaRel,
+      betaRel: this.bands.betaRel,
+      gammaRel: this.bands.gammaRel,
+      thetaAlphaRatio: this.bands.thetaAlphaRatio,
+      betaGammaRatio: this.bands.betaGammaRatio,
+      plvCoherence: this.coherenceScore,
+      stillness: this.stillnessValue,
+      heartRate: ppg?.heartRate ?? null,
+      hbo: fnirs?.lastHbO ?? null,
+      hbr: fnirs?.lastHbR ?? null,
+      battery: this.device?.battery ?? null,
+    };
   }
   getPrescribedFrequencyIndex(): number {
     return this.prescribedIndex;
