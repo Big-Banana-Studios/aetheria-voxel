@@ -167,8 +167,11 @@ export class TemplateLevel extends LevelBase {
   onLevelComplete(): void {
     this.ctx.speak(this.completionLine());
     this.ctx.audio.chime(432 * 1.5, 1.4);
-    // Gentle hint that the honest session metrics are available.
-    setTimeout(() => this.ctx.speak('Press V to see your session metrics, or choose your next node on the cube.'), 5000);
+    // Gentle hint that the honest session metrics are available (device-correct).
+    const metricsLine = this.ctx.isTouch()
+      ? 'Open your session metrics from the Pause menu, or tap the map to choose your next node.'
+      : 'Press V to see your session metrics, or choose your next node on the cube.';
+    setTimeout(() => this.ctx.speak(metricsLine), 5000);
   }
 
   get allPuzzlesSolved(): boolean {
@@ -210,7 +213,7 @@ export class TemplateLevel extends LevelBase {
     }
     if (nearUnsolved && !focusing && !this.focusHintShown) {
       this.focusHintShown = true;
-      this.ctx.speak('A resonance lock. Look at it and hold F to focus it open.');
+      this.ctx.speak('A sleeping crystal. Stay close and hold to wake it.');
     }
 
     // Breathing pacer timing: once you've spent a few seconds at an unsolved lock
@@ -228,7 +231,7 @@ export class TemplateLevel extends LevelBase {
     if (this.allPuzzlesSolved) {
       if (!this.gateAnnounced) {
         this.gateAnnounced = true;
-        this.ctx.speak('The locks are open. Cross the bridge with a steady mind and face the gate.');
+        this.ctx.speak('The crystals are awake. Cross the bridge with a steady mind and face the gate.');
       }
       // Gate-ceiling: guaranteed progress — the gate yields after a generous
       // dwell even if settling never reaches threshold (never a wall).
@@ -246,8 +249,8 @@ export class TemplateLevel extends LevelBase {
   }
   private crystalLine(): string {
     const remaining = this.crystals.filter((c) => !c.solved).length;
-    if (remaining === 0) return 'Every lock resonates. The way forward is lit.';
-    return `A lock answers your attention. ${remaining} remain.`;
+    if (remaining === 0) return 'Every crystal is awake. The way forward is lit.';
+    return `A crystal wakes to your attention. ${remaining} remain.`;
   }
   private completionLine(): string {
     // Honest framing: the claim is about the Field/node settling into harmony,

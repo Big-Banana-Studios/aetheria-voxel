@@ -44,16 +44,20 @@ export class Onboarding {
   constructor(private root: HTMLElement) {
     this.overlay = document.createElement('div');
     // Above the menus (z 40) so it greets the player over the title on first run.
+    // Scrollable + centering: the panel centers when there's room, but on a short
+    // viewport (phone in landscape) the overlay scrolls instead of clipping cards.
     this.overlay.style.cssText = [
       'position:fixed', 'inset:0', 'z-index:50', 'display:none',
-      'align-items:center', 'justify-content:center', 'padding:24px',
+      'flex-direction:column', 'align-items:center', 'justify-content:flex-start',
+      'overflow-y:auto', 'overscroll-behavior:contain', '-webkit-overflow-scrolling:touch',
+      'padding:24px 16px',
       'background:radial-gradient(circle at center, rgba(20,12,34,0.92), rgba(8,5,16,0.98))',
       'pointer-events:auto', 'font-family:"Segoe UI",system-ui,sans-serif', 'color:#e8e0f0',
     ].join(';');
 
     this.panel = document.createElement('div');
     this.panel.style.cssText =
-      'width:100%;max-width:440px;text-align:center;display:flex;flex-direction:column;align-items:stretch;';
+      'width:100%;max-width:440px;margin:auto 0;text-align:center;display:flex;flex-direction:column;align-items:stretch;';
 
     this.body = document.createElement('div');
     this.body.style.cssText =

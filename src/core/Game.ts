@@ -301,6 +301,7 @@ export class Game {
       freqTable: this.freqTable,
       getSource: () => this.getSource(),
       speak: (line) => this.hud.speak(line),
+      isTouch: () => this.usingTouch,
     });
     level.onComplete = (lvl) => this.onLevelComplete(lvl);
     level.build();
@@ -784,6 +785,7 @@ export class Game {
       completed: this.completedLevels,
       unlocked: this.unlockedLevels,
       breatheGuide: lvl?.breathingGuideActive ?? false,
+      usingTouch: this.usingTouch,
     });
 
     // Live tuning HUD (backtick) — the actual gate components for device tuning.

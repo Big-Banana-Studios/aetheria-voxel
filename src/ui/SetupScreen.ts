@@ -7,6 +7,7 @@
  * brain state — just connection, signal, and a captured baseline.
  */
 import type { ChannelQuality } from '../eeg/types';
+import { hasTouch } from './TouchControls';
 
 type Step = 'sensors' | 'quality' | 'calibrate' | 'ready';
 
@@ -55,14 +56,18 @@ export class SetupScreen {
 
   constructor(root: HTMLElement) {
     this.el = document.createElement('div');
+    // Scrollable + centering so a short viewport (phone in landscape) scrolls
+    // rather than clipping the calibration rows top/bottom (see MenuSystem).
     this.el.style.cssText = [
       'position:fixed', 'inset:0', 'z-index:41', 'display:none',
-      'align-items:center', 'justify-content:center',
+      'flex-direction:column', 'align-items:center', 'justify-content:flex-start',
+      'overflow-y:auto', 'overscroll-behavior:contain', '-webkit-overflow-scrolling:touch',
+      'padding:24px 16px',
       'background:radial-gradient(circle at center, rgba(20,12,34,0.82), rgba(8,5,16,0.97))',
       'pointer-events:auto', 'color:#e8e0f0', 'font-family:"Segoe UI",system-ui,sans-serif',
     ].join(';');
     this.panel = document.createElement('div');
-    this.panel.style.cssText = 'width:min(440px,92vw);text-align:center;';
+    this.panel.style.cssText = 'width:min(440px,92vw);margin:auto 0;text-align:center;';
     this.el.appendChild(this.panel);
     root.appendChild(this.el);
   }
@@ -272,7 +277,10 @@ export class SetupScreen {
     this.cb.finishCalibration();
     this.step = 'ready';
     this.panel.innerHTML = '';
-    this.panel.appendChild(this.heading("You're ready", 'The node awaits. Press C any time for the map, V for your session metrics.'));
+    const readyHint = hasTouch()
+      ? 'The node awaits. Tap the map any time to travel, and find your session metrics in the Pause menu.'
+      : 'The node awaits. Press C any time for the map, V for your session metrics.';
+    this.panel.appendChild(this.heading("You're ready", readyHint));
     const enter = this.btn('Enter the Field', true);
     enter.onclick = () => { this.hide(); this.cb.enter(); };
     this.panel.appendChild(enter);

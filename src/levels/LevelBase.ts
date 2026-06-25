@@ -25,6 +25,8 @@ export interface LevelContext {
   getSource: () => CoherenceSource;
   /** Narrative beats from the Resonance (Section 6.3). */
   speak: (line: string) => void;
+  /** Active input mode → device-correct control hints in spoken lines. */
+  isTouch: () => boolean;
 }
 
 export abstract class LevelBase {

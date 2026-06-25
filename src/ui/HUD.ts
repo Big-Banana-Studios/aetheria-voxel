@@ -30,6 +30,7 @@ export interface HUDState {
   completed: Set<number>;
   unlocked: Set<number>;
   breatheGuide: boolean; // show the breathing pacer (working a lock / settling at the gate)
+  usingTouch: boolean; // active input mode → device-correct control hints
 }
 
 export class HUD {
@@ -225,10 +226,11 @@ export class HUD {
 
     this.breathing.update(dt, state.breatheGuide);
 
-    this.puzzleCount.textContent = `Resonance locks: ${state.puzzlesSolved}/${state.puzzleTotal}`;
+    this.puzzleCount.textContent = `Crystals woken: ${state.puzzlesSolved}/${state.puzzleTotal}`;
 
-    // Meditation prompt fades in near the meditation space.
-    this.prompt.textContent = 'Enter Meditation  ·  M';
+    // Meditation prompt fades in near the meditation space. Device-correct: the
+    // on-screen Meditate button on touch, the M key on keyboard.
+    this.prompt.textContent = state.usingTouch ? 'Tap Meditate to sit' : 'Enter Meditation  ·  M';
     this.prompt.style.opacity = state.nearMeditation ? '0.9' : '0';
 
     if (this.subtitleTimer > 0) {

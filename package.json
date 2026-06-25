@@ -1,7 +1,7 @@
 {
   "name": "aetheria-voxel",
   "private": true,
-  "version": "2.2.2",
+  "version": "2.2.3",
   "type": "module",
   "license": "MIT",
   "description": "Aetheria: Resonance of the Spheres — Voxel Edition. Browser-native EEG-reactive contemplative voxel game.",

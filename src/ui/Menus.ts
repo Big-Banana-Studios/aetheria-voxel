@@ -51,14 +51,20 @@ export class MenuSystem {
     private tilt: TiltControlsUI,
   ) {
     this.overlay = document.createElement('div');
+    // Scrollable + vertically centering: `margin:auto` on the panel centers it
+    // when there's room, but on a short viewport (a phone in landscape) the panel
+    // keeps its height and the overlay scrolls instead of clipping top/bottom.
+    // `justify-content:flex-start` (not center) is what keeps the top reachable.
     this.overlay.style.cssText = [
       'position:fixed', 'inset:0', 'z-index:40', 'display:none',
-      'align-items:center', 'justify-content:center',
+      'flex-direction:column', 'align-items:center', 'justify-content:flex-start',
+      'overflow-y:auto', 'overscroll-behavior:contain', '-webkit-overflow-scrolling:touch',
+      'padding:24px 16px',
       'background:radial-gradient(circle at center, rgba(20,12,34,0.78), rgba(8,5,16,0.96))',
       'pointer-events:auto', 'font-family:"Segoe UI",system-ui,sans-serif', 'color:#e8e0f0',
     ].join(';');
     this.panel = document.createElement('div');
-    this.panel.style.cssText = 'min-width:320px;max-width:520px;text-align:center;';
+    this.panel.style.cssText = 'width:100%;max-width:520px;margin:auto 0;text-align:center;';
     this.overlay.appendChild(this.panel);
     this.root.appendChild(this.overlay);
 
@@ -120,7 +126,7 @@ export class MenuSystem {
     if (completed > 0) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:14px;opacity:0.5;font-size:0.85rem';
-      note.textContent = `${completed}/27 nodes restored · press C in the Field for the map`;
+      note.textContent = `${completed}/27 nodes restored · ${hasTouch() ? 'tap the map in the Field' : 'press C in the Field for the map'}`;
       this.panel.appendChild(note);
     }
     const version = document.createElement('div');
@@ -376,7 +382,7 @@ export class MenuSystem {
     scroll.innerHTML =
       sec('Your goal',
         'Each of the 27 nodes is a place that has gone quiet. You restore it by <b>settling</b> — letting your body grow calm and steady. ' +
-        'As you settle, the Field around you brightens, bridges form, and locks open. When a node is restored, the next opens on the map. ' +
+        'As you settle, the Field around you brightens, bridges form, and crystals wake. When a node is restored, the next opens on the map. ' +
         'Nothing punishes you: there are no enemies, no timers, no falling damage, no failure. If you simply spend time in a node, it will always open eventually.') +
 
       sec('Moving around',
