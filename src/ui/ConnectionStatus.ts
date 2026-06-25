@@ -37,16 +37,20 @@ export class ConnectionStatus {
     this.el.append(this.icon, this.label, this.heart);
   }
 
-  /** Reflect the Polar H10 heart sensor (HRV coherence + bpm). */
-  updateHeart(connected: boolean, coherence: number, bpm: number): void {
+  /**
+   * Reflect the Polar H10 heart sensor. Honest-claims rule (Selah): show the
+   * real measurement (bpm) and a qualitative settling word — NEVER a settledness
+   * score/percentage or any brain-state/attainment claim.
+   */
+  updateHeart(connected: boolean, settledness: number, bpm: number): void {
     if (!connected) {
       this.heart.style.display = 'none';
       return;
     }
     this.heart.style.display = 'inline';
-    const pct = Math.round(coherence * 100);
-    this.heart.textContent = `❤ ${bpm > 0 ? Math.round(bpm) + ' bpm · ' : ''}coh ${pct}%`;
-    this.heart.style.opacity = String(0.6 + coherence * 0.4);
+    const word = settledness > 0.66 ? ' · settled' : settledness > 0.33 ? ' · settling' : '';
+    this.heart.textContent = `❤ ${bpm > 0 ? Math.round(bpm) + ' bpm' : 'heart'}${word}`;
+    this.heart.style.opacity = String(0.6 + settledness * 0.4);
   }
 
   /** quality 0..1; connected = EEG source active; calibrating optional. */

@@ -32,8 +32,10 @@ export interface LevelFrequencyConfig {
   ambientSoundscape: string;
 
   // Gameplay
-  coherenceThreshold: number; // 0..1
-  sustainedSeconds: number;
+  coherenceThreshold: number; // 0..1 (relative settle target)
+  sustainedSeconds: number; // settle must hold this long to complete via the settled path
+  minDwellSeconds: number; // floor: experience the space before it can complete
+  maxDwellSeconds: number; // ceiling: guaranteed progress — never a wall (Selah Task 2)
   numFrequencyPuzzles: number; // 3..5
   numCoherenceChallenges: number; // 1
 }
@@ -49,6 +51,8 @@ export function buildConfig(
     ambientSoundscape?: string;
     numFrequencyPuzzles?: number;
     numCoherenceChallenges?: number;
+    minDwellSeconds?: number;
+    maxDwellSeconds?: number;
   },
 ): LevelFrequencyConfig {
   return {
@@ -71,6 +75,10 @@ export function buildConfig(
     ambientSoundscape: build.ambientSoundscape ?? 'cave',
     coherenceThreshold: entry.coherence_threshold,
     sustainedSeconds: entry.sustained_seconds,
+    minDwellSeconds: build.minDwellSeconds ?? 20,
+    // Ceiling sits well above the settled path so settling is the real route,
+    // but the level always completes eventually (guaranteed progress).
+    maxDwellSeconds: build.maxDwellSeconds ?? Math.max(90, entry.sustained_seconds * 2.5),
     numFrequencyPuzzles: build.numFrequencyPuzzles ?? 4,
     numCoherenceChallenges: build.numCoherenceChallenges ?? 1,
   };

@@ -41,6 +41,15 @@ export abstract class LevelBase {
   protected inMeditationSpace = false;
   private completionReported = false;
 
+  // Guaranteed-progress bounds (Selah Task 2): a minimum dwell floor so the
+  // player actually experiences the space, and a maximum dwell ceiling so the
+  // level is NEVER a wall — it completes eventually no matter the signal.
+  protected meditationDwell = 0; // seconds spent in the meditation space
+  protected minDwellSeconds: number;
+  protected maxDwellSeconds: number;
+  /** How the level completed, for honest logging: 'settled' | 'ceiling'. */
+  completedBy: 'settled' | 'ceiling' | null = null;
+
   onComplete?: (level: LevelBase) => void;
 
   constructor(config: LevelFrequencyConfig, ctx: LevelContext) {
@@ -49,6 +58,8 @@ export abstract class LevelBase {
     this.ctx = ctx;
     this.coherenceThreshold = config.coherenceThreshold;
     this.requiredSustainedSeconds = config.sustainedSeconds;
+    this.minDwellSeconds = config.minDwellSeconds;
+    this.maxDwellSeconds = config.maxDwellSeconds;
   }
 
   /** Build the voxel environment + reactive props. */
@@ -81,11 +92,14 @@ export abstract class LevelBase {
       this.inMeditationSpace = false;
     }
 
-    if (this.inMeditationSpace && coherence >= this.coherenceThreshold) {
-      this.sustainedCoherenceTimer += dt;
-    } else {
-      // Decay gently — never a hard reset (Section 14.2).
-      this.sustainedCoherenceTimer = Math.max(0, this.sustainedCoherenceTimer - dt * 0.5);
+    if (this.inMeditationSpace) {
+      this.meditationDwell += dt; // total dwell drives the ceiling
+      if (coherence >= this.coherenceThreshold) {
+        this.sustainedCoherenceTimer += dt;
+      } else {
+        // Decay gently — never a hard reset (Section 14.2).
+        this.sustainedCoherenceTimer = Math.max(0, this.sustainedCoherenceTimer - dt * 0.5);
+      }
     }
 
     if (!this.isComplete && this.checkCompletion()) {
@@ -105,11 +119,20 @@ export abstract class LevelBase {
   }
 
   protected checkCompletion(): boolean {
-    return (
-      this.allPuzzlesSolved &&
-      this.gateOpened &&
-      this.sustainedCoherenceTimer >= this.requiredSustainedSeconds
-    );
+    if (!this.allPuzzlesSolved || !this.gateOpened) return false;
+    // Must dwell at least the floor so the space is actually experienced.
+    if (this.meditationDwell < this.minDwellSeconds) return false;
+    // Settled path: sustained settling in the space.
+    if (this.sustainedCoherenceTimer >= this.requiredSustainedSeconds) {
+      this.completedBy = 'settled';
+      return true;
+    }
+    // Ceiling path: guaranteed progress — the level is never a wall.
+    if (this.meditationDwell >= this.maxDwellSeconds) {
+      this.completedBy = 'ceiling';
+      return true;
+    }
+    return false;
   }
 
   /** 0..1 progress toward sustained-meditation completion. */
@@ -120,6 +143,11 @@ export abstract class LevelBase {
   /** Is the player currently standing in the meditation space? (HUD prompt) */
   get isInMeditationSpace(): boolean {
     return this.inMeditationSpace;
+  }
+
+  /** Seconds dwelt in the meditation space so far (for logging). */
+  get meditationDwellSeconds(): number {
+    return this.meditationDwell;
   }
 
   abstract dispose(): void;

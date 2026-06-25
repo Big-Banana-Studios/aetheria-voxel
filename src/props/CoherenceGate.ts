@@ -96,4 +96,15 @@ export class CoherenceGate extends FrequencyReactiveBlock {
   get openProgress(): number {
     return Math.min(1, this.openTimer / this.requiredSeconds);
   }
+
+  /**
+   * Open regardless of signal — used by the level's max-dwell ceiling so a gate
+   * is never a wall (Selah's "guaranteed progress" rule). The Field simply
+   * yields after the player has dwelt long enough.
+   */
+  forceOpen(): void {
+    if (this.opened) return;
+    this.opened = true;
+    this.onOpened?.();
+  }
 }

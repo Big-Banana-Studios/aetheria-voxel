@@ -28,6 +28,7 @@ import { buildConfig } from '../levels/LevelFrequencyConfig';
 import { TemplateLevel } from '../levels/TemplateLevel';
 import { GUT1_BUILD } from '../levels/definitions/gut1';
 import { LevelBase } from '../levels/LevelBase';
+import { SignalLog } from './SignalLog';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -64,6 +65,9 @@ export class Game {
 
   private propGroup = new THREE.Group();
 
+  private signalLog = new SignalLog();
+  private logAccum = 0;
+
   constructor(private opts: GameOptions) {
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -90,9 +94,9 @@ export class Game {
     const renderPass = new RenderPass(this.scene, this.camera);
     const bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
-      0.7, // strength
-      0.6, // radius
-      0.55, // threshold
+      0.5, // strength — gentler so bright emissive surfaces don't blow out
+      0.5, // radius
+      0.82, // threshold — only genuinely luminous things bloom
     );
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(renderPass);
@@ -181,6 +185,9 @@ export class Game {
   private beginPlay(): void {
     this.hud.hideSetupBar();
     this.requestPlay();
+    // Honest note: the healing tones are felt more than heard (sub-bass), so
+    // many speakers won't reproduce the carrier (Selah Task 3, caution 1).
+    this.hud.speak('For the full felt experience, use headphones or a subwoofer — these frequencies are felt more than heard.');
   }
 
   // ── Play / pointer lock ──
@@ -197,6 +204,15 @@ export class Game {
 
   onPlayStateChange(cb: (p: boolean) => void): void {
     this.playStateListeners.push(cb);
+  }
+
+  /** Export the parallel signal log as JSON (research corpus). */
+  exportSignalLog(): string {
+    return this.signalLog.exportJSON();
+  }
+  /** Download the signal log (call from the console: aetheria.downloadSignalLog()). */
+  downloadSignalLog(): void {
+    this.signalLog.download();
   }
 
   // ── Loop ──
@@ -230,12 +246,13 @@ export class Game {
     const freqIndex = source.getPrescribedFrequencyIndex();
     const bands = source.getBandPowers();
 
-    // Fuse heart (HRV) coherence with the EEG/behaviour coherence when the
-    // Polar H10 is connected. Heart coherence leads in Manual Mode (it is a real
-    // biosignal); EEG leads when a Muse is streaming.
+    // Fuse heart (HRV) settledness with the EEG/behaviour signal when the Polar
+    // H10 is connected and has a baseline. Heart settledness leads in Manual Mode
+    // (it is a real biosignal); EEG leads when a Muse is streaming. Fallback
+    // chain per Selah's guide: HRV → behaviour/EEG → (timer ceiling in the level).
     let coherence = baseCoherence;
-    if (this.polar.isConnected) {
-      const hc = this.polar.getHeartCoherence();
+    if (this.polar.isConnected && this.polar.hasBaseline) {
+      const hc = this.polar.getSettledness();
       coherence = this.usingMuse ? 0.6 * baseCoherence + 0.4 * hc : 0.4 * baseCoherence + 0.6 * hc;
     }
 
@@ -251,6 +268,34 @@ export class Game {
     // Bridges and gates may have edited voxels — re-mesh anything dirty.
     this.world.remeshDirty();
 
+    // Parallel signal logging at ~1 Hz (Selah Task 6 — log everything).
+    this.logAccum += dt;
+    if (this.logAccum >= 1 && this.level) {
+      this.logAccum = 0;
+      const entry = this.freqTable.get(freqIndex);
+      this.signalLog.push({
+        t: Math.round(this.level.timeInLevel * 1000),
+        source: this.usingMuse && this.muse.isConnected ? 'muse' : 'manual',
+        heartConnected: this.polar.isConnected,
+        level: this.level.levelIndex,
+        freqIndex,
+        trueHz: entry.frequency_hz,
+        playbackHz: entry.playback_hz ?? 0,
+        baseSignal: baseCoherence,
+        heartSettledness: this.polar.getSettledness(),
+        fusedSettledness: coherence,
+        hrvRmssd: this.polar.getRmssd(),
+        hrvBaseline: this.polar.baselineRmssd,
+        bpm: this.polar.heartRate,
+        meditationDwell: this.level.meditationDwellSeconds,
+        inMeditationSpace: this.level.isInMeditationSpace,
+        px: this.player.feet.x,
+        py: this.player.feet.y,
+        pz: this.player.feet.z,
+        advancedBy: this.level.completedBy,
+      });
+    }
+
     // HUD.
     const lvl = this.level as TemplateLevel | null;
     this.hud.update(dt, {
@@ -264,7 +309,7 @@ export class Game {
       puzzlesSolved: lvl?.puzzlesSolvedCount ?? 0,
       puzzleTotal: lvl?.puzzleTotal ?? 0,
       heartConnected: this.polar.isConnected,
-      heartCoherence: this.polar.getHeartCoherence(),
+      heartCoherence: this.polar.getSettledness(),
       bpm: this.polar.heartRate,
     });
     this.debug.update();

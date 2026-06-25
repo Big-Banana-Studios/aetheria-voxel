@@ -106,9 +106,15 @@ export class AudioStack {
     this.binaural.setAmplitude(binAmt);
 
     // L3 harmonics emerge after ~0.4 (2× strongest, then 3×, 5×).
+    // The 2× harmonic keeps a small always-on floor so the felt sub-bass carrier
+    // (~27–110 Hz) is still audible on laptop/phone speakers, which can't
+    // reproduce it (Selah Task 3, caution 1). Headphones/sub render the carrier.
     const harmBase = silent ? 0 : Math.max(0, (c - 0.4) / 0.6);
     const weights = [0.12, 0.07, 0.04];
-    this.harmonics.forEach((h, i) => h.setAmplitude(harmBase * weights[i]));
+    this.harmonics.forEach((h, i) => {
+      const floor = i === 0 && !silent ? 0.05 : 0;
+      h.setAmplitude(Math.max(floor, harmBase * weights[i]));
+    });
 
     // L4 ambient bed clears as coherence rises (louder/murkier when low).
     this.ambientGain.gain.setTargetAtTime(

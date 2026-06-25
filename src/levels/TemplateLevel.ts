@@ -31,6 +31,8 @@ export class TemplateLevel extends LevelBase {
   private gate!: CoherenceGate;
   private builder: EnvironmentBuilder;
   private gateAnnounced = false;
+  private postPuzzleClock = 0; // time since all locks solved (gate-ceiling timer)
+  private readonly gateCeilingSeconds = 75; // gate yields by here regardless
 
   constructor(config: LevelFrequencyConfig, ctx: LevelContext) {
     super(config, ctx);
@@ -50,7 +52,7 @@ export class TemplateLevel extends LevelBase {
       skyColor: cfg.secondaryColor,
       groundColor: cfg.ambientColor,
       sunColor: cfg.primaryColor,
-      emissiveBoost: 1.1,
+      emissiveBoost: 1.0,
     });
 
     // 3. Player spawn + regime movement.
@@ -109,7 +111,7 @@ export class TemplateLevel extends LevelBase {
     );
     this.gate.onOpened = () => {
       this.ctx.audio.chime(432);
-      this.ctx.speak('The gate yields to a quiet mind. The node remembers you.');
+      this.ctx.speak('The gate yields as you settle. The node remembers you.');
     };
     this.addProp(this.gate);
 
@@ -189,9 +191,17 @@ export class TemplateLevel extends LevelBase {
       prop.update(dt, this.timeInLevel);
     }
 
-    if (!this.gateAnnounced && this.allPuzzlesSolved) {
-      this.gateAnnounced = true;
-      this.ctx.speak('The locks are open. Cross the bridge with a steady mind and face the gate.');
+    if (this.allPuzzlesSolved) {
+      if (!this.gateAnnounced) {
+        this.gateAnnounced = true;
+        this.ctx.speak('The locks are open. Cross the bridge with a steady mind and face the gate.');
+      }
+      // Gate-ceiling: guaranteed progress — the gate yields after a generous
+      // dwell even if settling never reaches threshold (never a wall).
+      this.postPuzzleClock += dt;
+      if (!this.gate.opened && this.postPuzzleClock >= this.gateCeilingSeconds) {
+        this.gate.forceOpen();
+      }
     }
   }
 
@@ -206,7 +216,9 @@ export class TemplateLevel extends LevelBase {
     return `A lock answers your attention. ${remaining} remain.`;
   }
   private completionLine(): string {
-    return 'The node is restored. A fragment of the Field returns to coherence — and so do you.';
+    // Honest framing: the claim is about the Field/node settling into harmony,
+    // not an attainment or brain-state in the player.
+    return 'The node is restored. A fragment of the Field settles into harmony. Rest here a moment.';
   }
 
   dispose(): void {

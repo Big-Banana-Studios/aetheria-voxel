@@ -10,7 +10,7 @@ export const GUT1_BUILD = {
   levelIndex: 0,
   worldSeed: 1303,
   skyPreset: 'subterranean',
-  fogDensity: 0.045,
+  fogDensity: 0.03, // lighter so the cavern stays legible — never lost (Selah)
   baseOscillatorAmplitude: 0.25,
   ambientSoundscape: 'cave',
   numFrequencyPuzzles: 4,

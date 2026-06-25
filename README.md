@@ -81,6 +81,22 @@ the EEG/behaviour coherence (heart leads in Manual Mode, EEG leads with a Muse).
 - **Coherence Lab code is reused**, not re-derived (FFT/PSD/coherence ported
   from `athena-core.js` / `spiral-wave.js`).
 
+## Honest signals (Selah's guide)
+
+- **Relative, never absolute.** The settle signal is measured against the
+  player's *own* baseline, not a fixed threshold.
+- **Honest claims only.** The sensor measures *bodily settling* (HRV / RMSSD,
+  breath-driven). UI says "settled / present / grounded / steady" and shows
+  heart rate (a real measurement) — it never shows a coherence %, an attainment
+  level, or any brain-state score. (Anti-fake-neurofeedback.)
+- **Guaranteed progress.** Every level has a max-dwell ceiling and the gate can
+  force-open — no level is ever a wall.
+- **Graceful degradation.** HRV (Polar) → behaviour/EEG → timer ceiling. The
+  game is whole with no sensor connected.
+- **Log everything.** All signals are recorded each tick in parallel
+  (`aetheria.downloadSignalLog()` in the console) — a third witness for later
+  fusion decisions, never shown to the player as a score.
+
 ## EEG
 
 `MuseClient` wraps the project's own `athena-core.js` — the validated browser BLE
