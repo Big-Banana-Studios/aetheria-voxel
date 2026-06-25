@@ -31,7 +31,7 @@ runs Manual Mode.
 - **1–9** — (Manual Mode) select a frequency within the regime
 - **C** — open the Lo Shu cube (hero view); click an unlocked node to travel
 - **`** (backtick) — toggle the EEG debug overlay
-- **Esc** — release the cursor
+- **Esc** — pause (settings · return to title)
 
 ## Architecture (maps to GDD Section 4.1)
 
@@ -52,14 +52,22 @@ public/data/ aetheria-frequency-table.json   ← single source of truth
 
 ### Status
 
-Phases 1–6 of the GDD build order are complete plus Selah's "Phase B": project
-foundation, voxel engine, EEG pipeline, audio, the level framework, and **all 27
-levels** across the three regimes (GUT magma caverns, HEART river gardens, HEAD
-floating cosmic platforms), navigable via the **Lo Shu cube** map (the 27
-frequencies as a 3×3×3 magic cube — GUT bottom, HEART middle, HEAD crown, 2178 Hz
-at the centre). Progress is saved to localStorage; levels unlock in order within
-a regime, regimes in any order. Phase 7 (full menus, IndexedDB save schema,
-settings, deploy) is next.
+**All 7 GDD phases + Selah's Phase B are complete.** Project foundation, voxel
+engine, EEG pipeline, audio, level framework, **all 27 levels** (GUT magma
+caverns, HEART river gardens, HEAD floating cosmic platforms), the **Lo Shu cube**
+map (27 frequencies as a 3×3×3 magic cube — GUT bottom, HEART middle, HEAD crown,
+2178 Hz at the centre), and the **shell**: main menu, settings (audio · render
+scale · subtitles · reduce-motion · reduce-flashes · settling-depth difficulty),
+pause, credits, and **IndexedDB save** (per-level stats + research export, with
+one-time migration from the localStorage prototype). Levels unlock in order
+within a regime, regimes in any order. A GitHub Pages deploy workflow is included
+(`.github/workflows/deploy.yml`).
+
+### Deploy
+
+Push to `main` and the workflow builds + publishes `dist/` to GitHub Pages
+(enable Pages → "GitHub Actions" in repo settings). `vite.config.ts` uses a
+relative `base`, so it works under a project subpath or a custom domain.
 
 The **27 real Aetheria Guidebook frequencies** (174 Hz → 6336 Hz, SOURCE = 2178 Hz)
 are loaded as the canonical `frequency_hz`. Because the audio is meant to be

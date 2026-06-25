@@ -53,6 +53,7 @@ export class PlayerController {
   private meditationLift = 0; // smooth camera rise while meditating
 
   private regime: RegimeMovement = REGIME_MOVEMENT.GUT;
+  private reduceMotion = false;
 
   // Listeners so other systems can react to focus/meditation toggles.
   private meditationListeners: ((on: boolean) => void)[] = [];
@@ -71,6 +72,11 @@ export class PlayerController {
 
   setRegime(regime: 'GUT' | 'HEART' | 'HEAD'): void {
     this.regime = REGIME_MOVEMENT[regime] ?? REGIME_MOVEMENT.GUT;
+  }
+
+  /** Accessibility: disable the meditation camera rise (motion sensitivity). */
+  setReduceMotion(v: boolean): void {
+    this.reduceMotion = v;
   }
 
   spawnAt(x: number, y: number, z: number): void {
@@ -199,8 +205,8 @@ export class PlayerController {
     }
     if (this.feet.y > CHUNK_SY) this.feet.y = CHUNK_SY;
 
-    // Smoothly raise the camera while meditating.
-    const targetLift = this.isMeditating ? 1.2 : 0.0;
+    // Smoothly raise the camera while meditating (skipped if reduce-motion).
+    const targetLift = this.isMeditating && !this.reduceMotion ? 1.2 : 0.0;
     this.meditationLift += (targetLift - this.meditationLift) * Math.min(1, dt * 2.5);
 
     this.syncCamera();

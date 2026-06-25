@@ -5,3 +5,6 @@ dist-ssr
 .DS_Store
 .vite
 *.log
+
+# verification screenshots (regenerate with scripts/screenshot.mjs)
+docs/shots/

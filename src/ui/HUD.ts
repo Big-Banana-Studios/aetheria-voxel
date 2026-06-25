@@ -41,6 +41,7 @@ export class HUD {
   private banner: HTMLDivElement;
   private setupBar: HTMLDivElement;
   private subtitleTimer = 0;
+  private subtitlesEnabled = true;
 
   constructor(private root: HTMLElement, freqTable: FrequencyTable) {
     root.appendChild(this.mandala.el);
@@ -180,7 +181,13 @@ export class HUD {
     this.cube.bloom(index);
   }
 
+  setSubtitlesEnabled(v: boolean): void {
+    this.subtitlesEnabled = v;
+    if (!v) this.subtitle.style.opacity = '0';
+  }
+
   speak(line: string): void {
+    if (!this.subtitlesEnabled) return;
     this.subtitle.textContent = line;
     this.subtitle.style.opacity = '1';
     this.subtitleTimer = 7; // seconds visible

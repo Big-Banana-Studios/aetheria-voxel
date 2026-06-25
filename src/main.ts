@@ -1,6 +1,6 @@
 /**
  * Aetheria: Resonance of the Spheres — Voxel Edition
- * Entry point. Boots the Game and wires the click-to-play pointer-lock gate.
+ * Entry point. Boots the Game and opens the main menu (Section 9.2).
  */
 import { Game } from './core/Game';
 
@@ -17,20 +17,12 @@ async function boot() {
   const game = new Game({ canvas, hud });
   await game.init();
 
-  // Hide the loading veil, reveal the click-to-play gate.
+  // The MenuSystem replaces the old click-to-play gate.
   loading.classList.add('hidden');
-  clickToPlay.classList.remove('hidden');
-
-  // Pointer lock must be initiated by a user gesture.
-  clickToPlay.addEventListener('click', () => {
-    game.requestPlay();
-  });
-
-  game.onPlayStateChange((playing) => {
-    clickToPlay.classList.toggle('hidden', playing);
-  });
+  clickToPlay.remove();
 
   game.start();
+  game.showMainMenu();
 
   // Expose for debugging in the console.
   (window as unknown as { aetheria: Game }).aetheria = game;

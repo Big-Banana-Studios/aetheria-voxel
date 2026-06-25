@@ -29,6 +29,9 @@ import { TemplateLevel } from '../levels/TemplateLevel';
 import { buildParamsForLevel } from '../levels/buildParams';
 import { LevelBase } from '../levels/LevelBase';
 import { SignalLog } from './SignalLog';
+import { SaveSystem } from './SaveSystem';
+import { Settings, DIFFICULTY_SCALE } from './Settings';
+import { MenuSystem } from '../ui/Menus';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -68,9 +71,16 @@ export class Game {
 
   private propGroup = new THREE.Group();
   private starfield!: THREE.Points;
+  private bloom!: UnrealBloomPass;
 
   private signalLog = new SignalLog();
   private logAccum = 0;
+
+  private settings = new Settings();
+  private save = new SaveSystem();
+  private menus!: MenuSystem;
+  // Shell state: 'menu' title, 'setup' sensor choice, 'playing', 'paused', 'map'.
+  private state: 'menu' | 'setup' | 'playing' | 'paused' | 'map' | 'complete' = 'menu';
 
   constructor(private opts: GameOptions) {
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: 'high-performance' });
@@ -88,8 +98,10 @@ export class Game {
     this.scene.add(this.camera);
 
     // Lights for the standard-material props (the voxel world is self-lit).
-    const hemi = new THREE.HemisphereLight(0x4a3a6a, 0x100a18, 0.7);
-    const dir = new THREE.DirectionalLight(0xb89cdd, 0.6);
+    // Brighter than before so crystals/flora read as colored, not grey, even at
+    // low settling (the "grey props" polish from the screenshot pass).
+    const hemi = new THREE.HemisphereLight(0x8a72c0, 0x241830, 1.15);
+    const dir = new THREE.DirectionalLight(0xd8c8ff, 0.9);
     dir.position.set(0.5, 1, 0.3);
     this.scene.add(hemi, dir);
 
@@ -99,7 +111,7 @@ export class Game {
 
     // Post-process: bloom carries the "earned with the mind" luminosity.
     const renderPass = new RenderPass(this.scene, this.camera);
-    const bloom = new UnrealBloomPass(
+    this.bloom = new UnrealBloomPass(
       new THREE.Vector2(window.innerWidth, window.innerHeight),
       0.5, // strength — gentler so bright emissive surfaces don't blow out
       0.5, // radius
@@ -107,7 +119,7 @@ export class Game {
     );
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(renderPass);
-    this.composer.addPass(bloom);
+    this.composer.addPass(this.bloom);
 
     // Data + EEG.
     this.freqTable = await FrequencyTable.load();
@@ -116,17 +128,29 @@ export class Game {
     this.muse = new MuseClient(this.freqTable);
     this.debug = new EEGDebugOverlay(this.opts.hud, () => this.getSource(), this.freqTable);
 
-    this.loadCompleted();
+    // Persistent save (IndexedDB) → completed set.
+    await this.save.init();
+    this.completedLevels = this.save.completedSet;
+    this.recomputeUnlocked();
+
+    // Menus + settings.
+    this.menus = new MenuSystem(this.opts.hud, this.settings, this.save, {
+      onEnter: () => this.enterFromMenu(),
+      onResume: () => this.resume(),
+      onMainMenu: () => this.showMainMenu(),
+    });
+    this.settings.onChange((s) => this.applySettings(s));
 
     // Player.
     this.player = new PlayerController(this.camera, this.renderer.domElement, this.world);
-    this.player.controls.addEventListener('unlock', () => this.setPlaying(false));
+    this.player.controls.addEventListener('unlock', () => this.onPointerUnlock());
     this.player.controls.addEventListener('lock', () => this.setPlaying(true));
 
-    // HUD setup-bar wiring.
+    // HUD setup-bar wiring (hidden until the player chooses to enter).
     this.hud.onConnectMuse = () => this.connectMuse();
     this.hud.onManualMode = () => this.startManual();
     this.hud.onConnectPolar = () => this.polar.connect();
+    this.hud.hideSetupBar();
 
     // Manual frequency selection (number keys 1–9) — the radial menu's keyboard
     // equivalent (Section 5.4).
@@ -137,8 +161,16 @@ export class Game {
       if (e.code === 'KeyC') this.toggleCube();
     });
 
-    // Build the reference level (GUT-1).
-    this.loadLevel(0);
+    // Build the level behind the menu (continue point, or GUT-1 to start).
+    this.loadLevel(this.continueIndex());
+  }
+
+  /** The level to resume at: the first unlocked-but-unfinished level, else GUT-1. */
+  private continueIndex(): number {
+    for (let i = 0; i < 27; i++) {
+      if (this.unlockedLevels.has(i) && !this.completedLevels.has(i)) return i;
+    }
+    return 0;
   }
 
   // ── Level loading ──
@@ -150,6 +182,12 @@ export class Game {
     }
     const entry = this.freqTable.get(index);
     const config = buildConfig(entry, buildParamsForLevel(index));
+
+    // Difficulty scales the settle threshold + sustained dwell (never adds time
+    // pressure; ceilings still guarantee progress).
+    const scale = DIFFICULTY_SCALE[this.settings.data.difficulty];
+    config.coherenceThreshold = Math.max(0.2, Math.min(0.95, config.coherenceThreshold * scale.threshold));
+    config.sustainedSeconds = Math.round(config.sustainedSeconds * scale.sustain);
 
     const regime = REGIME_INDEX[config.regime];
     this.muse.setRegime(regime);
@@ -176,24 +214,6 @@ export class Game {
 
   // ── Progression: completed set, unlock logic, cube navigation ──
 
-  private loadCompleted(): void {
-    try {
-      const raw = localStorage.getItem('aetheria-completed');
-      if (raw) this.completedLevels = new Set(JSON.parse(raw) as number[]);
-    } catch {
-      /* ignore */
-    }
-    this.recomputeUnlocked();
-  }
-
-  private saveCompleted(): void {
-    try {
-      localStorage.setItem('aetheria-completed', JSON.stringify([...this.completedLevels]));
-    } catch {
-      /* ignore */
-    }
-  }
-
   /**
    * Unlock rule (GDD §10.1): regimes can be entered in any order, but levels
    * complete in order WITHIN a regime. So a level is unlocked if it is the first
@@ -212,14 +232,35 @@ export class Game {
   }
 
   private onLevelComplete(lvl: LevelBase): void {
+    // Persist completion + honest stats (Section 10.3).
+    void this.save.recordCompletion(lvl.levelIndex, {
+      coherence: lvl.meditationProgress, // sustained-settling progress (research field)
+      timeSec: Math.round(lvl.timeInLevel),
+      puzzlesSolved: (lvl as TemplateLevel).puzzlesSolvedCount ?? 0,
+      meditationMinutes: lvl.meditationDwellSeconds / 60,
+      completedBy: lvl.completedBy,
+    });
+    this.completedLevels = this.save.completedSet;
     this.completedLevels.add(lvl.levelIndex);
-    this.saveCompleted();
     this.recomputeUnlocked();
     this.hud.bloomNode(lvl.levelIndex);
     this.hud.showCompletion(lvl.config.levelName);
     // Release the cursor and open the cube so the player can choose where next.
+    this.state = 'complete';
     this.hud.showCubeHero();
     this.player.unlock();
+  }
+
+  /** Dev/testing hook: jump straight to a level, bypassing the unlock gate.
+   *  Call from the console: aetheria.gotoLevel(10). */
+  gotoLevel(index: number): void {
+    this.menus.hide();
+    this.hud.hideCompletion();
+    this.hud.hideCubeHero();
+    this.hud.hideSetupBar();
+    this.loadLevel(index);
+    this.state = 'playing';
+    this.requestPlay();
   }
 
   private travelToNode(index: number): void {
@@ -227,13 +268,21 @@ export class Game {
     this.hud.hideCompletion();
     this.hud.hideCubeHero();
     this.loadLevel(index);
+    this.state = 'playing';
     this.requestPlay();
   }
 
   private toggleCube(): void {
+    // Only meaningful while in the Field (not on the title/pause screens).
+    if (this.state !== 'playing' && this.state !== 'map') return;
     this.hud.toggleCube();
-    if (this.hud.cubeIsHero) this.player.unlock();
-    else this.player.lock();
+    if (this.hud.cubeIsHero) {
+      this.state = 'map';
+      this.player.unlock();
+    } else {
+      this.state = 'playing';
+      this.player.lock();
+    }
   }
 
   // ── Sky / atmosphere per regime ──
@@ -257,6 +306,18 @@ export class Game {
     pts.visible = false;
     pts.frustumCulled = false;
     return pts;
+  }
+
+  private applySettings(s: import('./Settings').SettingsData): void {
+    this.audio.setMasterVolume(s.masterVolume);
+    this.hud.setSubtitlesEnabled(s.subtitles);
+    this.player?.setReduceMotion(s.reduceMotion);
+    // Reduce flashes → gentler bloom (photosensitivity, Section 14.3).
+    if (this.bloom) this.bloom.strength = s.reduceFlashes ? 0.22 : 0.5;
+    // Render scale (perf / quality).
+    const base = Math.min(window.devicePixelRatio, 1.5);
+    this.renderer.setPixelRatio(base * s.renderScale);
+    this.resize();
   }
 
   private applySky(regime: 'GUT' | 'HEART' | 'HEAD', ambient: string, sky: string): void {
@@ -293,10 +354,52 @@ export class Game {
 
   private beginPlay(): void {
     this.hud.hideSetupBar();
+    this.state = 'playing';
     this.requestPlay();
     // Honest note: the healing tones are felt more than heard (sub-bass), so
     // many speakers won't reproduce the carrier (Selah Task 3, caution 1).
     this.hud.speak('For the full felt experience, use headphones or a subwoofer — these frequencies are felt more than heard.');
+  }
+
+  // ── Shell: menu → setup → play → pause ──
+
+  /** Show the title menu (called at boot and from pause "Return to Title"). */
+  showMainMenu(): void {
+    this.state = 'menu';
+    this.hud.hideSetupBar();
+    this.hud.hideCompletion();
+    if (this.hud.cubeIsHero) this.hud.hideCubeHero();
+    if (this.player?.isLocked) this.player.unlock();
+    this.menus.showMain();
+  }
+
+  /** From the title's "Enter the Field": choose a sensor, then play. */
+  private enterFromMenu(): void {
+    this.menus.hide();
+    this.state = 'setup';
+    // Make sure we resume at the right level.
+    if (this.level && this.completedLevels.has(this.level.levelIndex)) {
+      this.loadLevel(this.continueIndex());
+    }
+    this.hud.showSetupBar();
+  }
+
+  private pause(): void {
+    if (this.state !== 'playing') return;
+    this.state = 'paused';
+    this.menus.showPause();
+  }
+
+  private resume(): void {
+    this.menus.hide();
+    this.state = 'playing';
+    this.requestPlay();
+  }
+
+  private onPointerUnlock(): void {
+    this.setPlaying(false);
+    // Esc in the Field opens pause; cube/menu/completion unlocks are intentional.
+    if (this.state === 'playing') this.pause();
   }
 
   // ── Play / pointer lock ──
