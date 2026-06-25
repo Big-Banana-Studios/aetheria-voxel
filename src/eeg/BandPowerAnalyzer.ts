@@ -23,7 +23,15 @@ export class BandPowerAnalyzer {
   /** Analyze one channel window → absolute band powers. */
   analyzeChannel(window: ArrayLike<number>): Record<string, number> | null {
     if (window.length < 64) return null;
-    const { psd, freqs } = computePowerSpectrum(window, this.fs);
+    // Detrend (remove the mean) so DC offset / electrode drift doesn't swamp the
+    // delta band and flatten the others.
+    const n = window.length;
+    let mean = 0;
+    for (let i = 0; i < n; i++) mean += window[i];
+    mean /= n;
+    const detrended = new Float64Array(n);
+    for (let i = 0; i < n; i++) detrended[i] = window[i] - mean;
+    const { psd, freqs } = computePowerSpectrum(detrended, this.fs);
     const out: Record<string, number> = {};
     const binHz = freqs.length > 1 ? freqs[1] - freqs[0] : 1;
     for (const [name, [lo, hi]] of Object.entries(BANDS)) {

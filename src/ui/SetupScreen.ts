@@ -22,6 +22,17 @@ const CHANNELS: (keyof ChannelQuality)[] = ['tp9', 'af7', 'af8', 'tp10'];
 const CH_LABEL: Record<string, string> = { tp9: 'TP9', af7: 'AF7', af8: 'AF8', tp10: 'TP10' };
 const CALIB_SECONDS = 30;
 
+/** Live sensor status shown during the signal-check step. */
+export interface SetupStatus {
+  quality: ChannelQuality; // 0..1 per EEG electrode
+  hr: number | null; // heart rate (Polar or Muse PPG)
+  ppgStreaming: boolean; // Muse pulse stream producing data
+  fnirsStreaming: boolean; // Muse optical (HbO/HbR) producing data
+  hbo: number | null;
+  polarConnected: boolean;
+  calibProgress: number;
+}
+
 export class SetupScreen {
   readonly el: HTMLDivElement;
   private panel: HTMLDivElement;
@@ -138,6 +149,20 @@ export class SetupScreen {
       bars.appendChild(col);
     }
     this.panel.appendChild(bars);
+
+    // Streaming status for the other Athena/Polar channels (so you can confirm
+    // PPG + fNIRS are actually flowing — fNIRS needs good forehead contact and
+    // ~10–30s to warm up).
+    const status = document.createElement('div');
+    status.id = 'setup-stream';
+    status.style.cssText = 'margin:0.6rem auto 0.2rem;font:0.82rem/1.8 ui-monospace,Consolas,monospace;opacity:0.85;text-align:left;display:inline-block;min-width:240px;';
+    status.innerHTML =
+      '<div data-row="eeg">EEG signal: —</div>' +
+      '<div data-row="ppg">Pulse (PPG): —</div>' +
+      '<div data-row="fnirs">fNIRS (HbO/HbR): —</div>' +
+      '<div data-row="polar">Polar H10: —</div>';
+    this.panel.appendChild(status);
+
     const cont = this.btn('Begin Calibration', true);
     cont.onclick = () => this.gotoCalibrate();
     const skip = this.btn('Skip — enter now');
@@ -170,25 +195,43 @@ export class SetupScreen {
     this.panel.appendChild(enter);
   }
 
-  /** Called each frame while visible: live signal bars + calibration countdown. */
-  update(dt: number, quality: ChannelQuality, calibProgress: number): void {
+  /** Called each frame while visible: live signal bars + streaming status + countdown. */
+  update(dt: number, s: SetupStatus): void {
     if (this.step === 'quality') {
       const bars = this.panel.querySelectorAll<HTMLElement>('[data-ch]');
+      let qSum = 0;
       bars.forEach((bar) => {
         const ch = bar.dataset.ch as keyof ChannelQuality;
-        const q = quality[ch] ?? 0;
+        const q = s.quality[ch] ?? 0;
+        qSum += q;
         const fill = bar.querySelector<HTMLElement>('.fill');
         if (fill) {
           fill.style.height = `${Math.round(q * 100)}%`;
           fill.style.background = q > 0.6 ? '#5ad48a' : q > 0.3 ? '#d4c050' : '#e85a5a';
         }
       });
+
+      const row = (key: string): HTMLElement | null => this.panel.querySelector(`[data-row="${key}"]`);
+      const ok = '#5ad48a', warn = '#d4c050', bad = '#e88e8e';
+      const set = (key: string, text: string, color: string) => {
+        const el = row(key);
+        if (el) { el.textContent = text; el.style.color = color; }
+      };
+      const eegAvg = qSum / 4;
+      set('eeg', `EEG signal: ${eegAvg > 0.6 ? 'strong' : eegAvg > 0.3 ? 'weak — reseat band' : 'poor — dampen/reseat'}`,
+        eegAvg > 0.6 ? ok : eegAvg > 0.3 ? warn : bad);
+      set('ppg', `Pulse (PPG): ${s.ppgStreaming ? `streaming ✓ ${s.hr ? Math.round(s.hr) + ' bpm' : ''}` : 'warming up…'}`,
+        s.ppgStreaming ? ok : warn);
+      set('fnirs', `fNIRS (HbO/HbR): ${s.fnirsStreaming ? `streaming ✓ (HbO ${s.hbo?.toFixed(1)})` : 'no signal — press band to forehead'}`,
+        s.fnirsStreaming ? ok : bad);
+      set('polar', s.polarConnected ? `Polar H10: connected ✓ ${s.hr ? Math.round(s.hr) + ' bpm' : ''}` : 'Polar H10: not connected',
+        s.polarConnected ? ok : warn);
     } else if (this.step === 'calibrate') {
       this.calibElapsed += dt;
       const ring = this.panel.querySelector('#setup-calib');
       const remain = Math.max(0, CALIB_SECONDS - this.calibElapsed);
       if (ring) ring.textContent = remain > 0 ? Math.ceil(remain).toString() : '✓';
-      if (calibProgress >= 1 || this.calibElapsed >= CALIB_SECONDS) this.gotoReady();
+      if (s.calibProgress >= 1 || this.calibElapsed >= CALIB_SECONDS) this.gotoReady();
     }
   }
 }

@@ -33,6 +33,7 @@ export class TemplateLevel extends LevelBase {
   private gateAnnounced = false;
   private postPuzzleClock = 0; // time since all locks solved (gate-ceiling timer)
   private readonly gateCeilingSeconds = 75; // gate yields by here regardless
+  private focusHintShown = false;
 
   constructor(config: LevelFrequencyConfig, ctx: LevelContext) {
     super(config, ctx);
@@ -193,6 +194,21 @@ export class TemplateLevel extends LevelBase {
     }
 
     super.update(dt, freqIndex, coherence, bands);
+
+    // Resonance locks open by Focus: look at a lock (be near it) and hold F.
+    const pf = this.ctx.player.feet;
+    const focusing = this.ctx.player.isFocusing;
+    let nearUnsolved = false;
+    for (const c of this.crystals) {
+      const cp = c.object.position;
+      const near = Math.hypot(pf.x - cp.x, pf.z - cp.z) < 3.5;
+      c.setAttended(focusing && near);
+      if (near && !c.solved) nearUnsolved = true;
+    }
+    if (nearUnsolved && !focusing && !this.focusHintShown) {
+      this.focusHintShown = true;
+      this.ctx.speak('A resonance lock. Look at it and hold F to focus it open.');
+    }
 
     // Feed every reactive prop the current state and animate it.
     for (const prop of this.props) {

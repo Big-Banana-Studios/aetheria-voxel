@@ -15,8 +15,15 @@ export class ResonanceCrystal extends FrequencyReactiveBlock {
   private shards: THREE.Mesh[] = [];
   private material: THREE.MeshStandardMaterial;
   private solveTimer = 0;
+  private attended = false; // player is near + holding Focus
+  private readonly solveSeconds = 2.5;
   solved = false;
   onSolved?: () => void;
+
+  /** Set by the level each frame: is the player focusing on this lock? */
+  setAttended(v: boolean): void {
+    this.attended = v;
+  }
 
   constructor(
     position: THREE.Vector3,
@@ -65,18 +72,38 @@ export class ResonanceCrystal extends FrequencyReactiveBlock {
       return;
     }
 
-    const target = 0.2 + strength * (0.4 + 0.8 * this.coherence) * pulse;
-    this.material.emissiveIntensity += (target - this.material.emissiveIntensity) * Math.min(1, dt * 6);
+    // A lock opens by FOCUS (hold F near it) — reliable with any sensor or none —
+    // OR by matching its tuned frequency (manual selection / EEG). Focus is the
+    // dependable path; frequency-match is a bonus accelerator. The hold is
+    // F-assisted: while F is held the charge accrues and does NOT decay.
+    const active = this.attended || this.resonating;
+    const charge = this.solveTimer / this.solveSeconds; // 0..1, visible fill
 
-    // Lock when resonating with at least gentle coherence, sustained ~2s.
-    if (this.resonating && this.coherence > 0.35) {
-      this.solveTimer += dt;
-      if (this.solveTimer >= 2) {
+    // Visibly charge up while focusing so the hold reads clearly.
+    const target = active
+      ? 0.5 + 1.6 * charge + 0.2 * pulse
+      : 0.2 + strength * (0.4 + 0.8 * this.coherence) * pulse;
+    this.material.emissiveIntensity += (target - this.material.emissiveIntensity) * Math.min(1, dt * 6);
+    // The cluster lifts/expands a touch as it fills, then locks open.
+    this.object.scale.setScalar(1 + (active ? 0.18 * charge : 0));
+
+    if (active) {
+      // Frequency-match accelerates; focus alone still completes the hold.
+      const rate = this.resonating ? 1.6 : 1.0;
+      this.solveTimer += dt * rate;
+      if (this.solveTimer >= this.solveSeconds) {
         this.solved = true;
+        this.object.scale.setScalar(1);
         this.onSolved?.();
       }
     } else {
+      // Gentle decay only when not held (a brief glance won't reset all progress).
       this.solveTimer = Math.max(0, this.solveTimer - dt * 0.5);
     }
+  }
+
+  /** 0..1 progress toward opening (for any future HUD feedback). */
+  get progress(): number {
+    return Math.min(1, this.solveTimer / this.solveSeconds);
   }
 }

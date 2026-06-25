@@ -2,6 +2,23 @@
 
 For tuning with the **Muse S Athena** + **Polar H10** before deploying.
 
+## Device session 1 — findings (2026-06)
+
+- **Polar HRV settle gate: working.** RMSSD ~15 ms baseline → 35–47 ms settled;
+  the gate pinned at 1.0 for ~12 min. No change needed.
+- **Muse EEG was delta-dominated** (delta≈1.0, other bands ≈0) — a contact/DC
+  signature, not real rhythms. Fixes applied: `dcOffset:true` + per-window
+  detrend in the band analyzer. Verify in the new setup signal check that, with
+  the band well-seated, alpha/theta rise when you close your eyes.
+- **fNIRS never streamed** (HbO/HbR null) — almost certainly forehead contact.
+  The setup screen now shows fNIRS streaming status so you can confirm before
+  entering (press the band gently to the forehead; it can take ~10–30 s).
+- **Resonance was unreliable** because locks required the EEG-prescribed frequency
+  to match their tuning, which the flaky EEG couldn't hold. **Now: locks open by
+  Focus** — walk up to a lock and hold **F** (~2.5 s). Frequency-match (manual
+  1–9, or a clean EEG) still works and opens them faster. The settle gate remains
+  HRV/stillness; locks are now an interaction, not a brain-state demand.
+
 ## Run it (local is enough for Web Bluetooth)
 
 ```bash

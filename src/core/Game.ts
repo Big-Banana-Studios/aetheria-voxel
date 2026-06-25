@@ -479,9 +479,18 @@ export class Game {
   }
 
   private update(dt: number): void {
-    // Live setup-screen feedback (signal bars + calibration countdown).
+    // Live setup-screen feedback (signal bars + streaming status + countdown).
     if (this.state === 'setup' && this.setup.isVisible) {
-      this.setup.update(dt, this.muse.getChannelQuality(), this.muse.calibrationProgress);
+      const sm = this.muse.getMetrics();
+      this.setup.update(dt, {
+        quality: this.muse.getChannelQuality(),
+        hr: this.polar.heartRate || sm.heartRate,
+        ppgStreaming: sm.heartRate != null,
+        fnirsStreaming: sm.hbo != null,
+        hbo: sm.hbo,
+        polarConnected: this.polar.isConnected,
+        calibProgress: this.muse.calibrationProgress,
+      });
     }
 
     // Player movement (only when locked / playing).

@@ -78,6 +78,7 @@ export class MuseClient implements CoherenceSource {
     try {
       this.device = new window.AthenaDevice({
         preset: 'p1041',
+        dcOffset: true, // subtract DC at decode so band powers aren't delta-swamped
         processInterval: 1000,
         onEEG: (d) => this.onEEG(d),
         onAccGyro: (d) => this.onAccGyro(d),
