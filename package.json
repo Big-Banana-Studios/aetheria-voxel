@@ -9,8 +9,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
-    "deploy": "npm run build && npx --yes gh-pages@6 -d dist -t -b gh-pages"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "idb": "^8.0.0",

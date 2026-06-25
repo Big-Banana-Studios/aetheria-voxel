@@ -70,13 +70,12 @@ The build is fully static (`vite build` → `dist/`); GitHub Pages serves it
 directly. `vite.config.ts` uses a relative `base`, so it works under a project
 subpath (`user.github.io/<repo>/`) or a custom domain.
 
-**Automatic (push to `main`):** the workflow (`.github/workflows/deploy.yml`)
-builds and force-pushes `dist/` to the **`gh-pages`** branch. One-time setup:
-**Settings → Pages → Build and deployment → Source → "Deploy from a branch" →
-`gh-pages` / `(root)`**.
-
-**Manual (one command):** `npm run deploy` builds and publishes `dist/` to
-`gh-pages` from your machine (uses `npx gh-pages`; `-t` keeps the `.nojekyll`).
+**One-time setup:** Settings → Pages → Build and deployment → Source →
+**"GitHub Actions"**. After that, every `git push origin main` triggers
+`.github/workflows/deploy.yml`, which builds on GitHub's runners and deploys
+with GitHub's first-party Pages action — no local tooling, no personal login,
+no tokens to manage (it uses the workflow's built-in OIDC id-token). Trigger a
+run any time from the Actions tab (workflow_dispatch) too.
 
 A `.nojekyll` file ships in the build so Pages serves the bundle verbatim
 (no Jekyll processing).
