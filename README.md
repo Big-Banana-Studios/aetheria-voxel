@@ -38,8 +38,9 @@ runs Manual Mode.
 src/
   core/      Game loop + state machine, PlayerController, FrequencyTable, rng
   voxel/     VoxelChunk, World, BlockRegistry, GreedyMesher, mesher.worker, VoxelMaterial
-  eeg/       MuseClient (wraps the ported athena-core.js driver), ManualMode,
-             BandPowerAnalyzer, CoherenceCalculator, FrequencyPrescriber, dsp, EEGDebugOverlay
+  eeg/       MuseClient (wraps athena-core.js), PolarClient (wraps polar-h10.js,
+             HRV/heart coherence), ManualMode, BandPowerAnalyzer,
+             CoherenceCalculator, FrequencyPrescriber, dsp, EventBus, EEGDebugOverlay
   audio/     Oscillator, BinauralBeat, AudioStack (coherence-driven, A=432Hz)
   levels/    LevelBase, TemplateLevel, EnvironmentBuilder, LevelFrequencyConfig, definitions/
   props/     FrequencyReactiveBlock + ResonanceCrystal, CymaticsPool, HarmonicBridge,
@@ -55,6 +56,18 @@ engine, EEG pipeline (ported from the validated Coherence Lab driver), audio,
 and one fully playable template level — **GUT-1, Volcanic Core** — with every
 system working end to end. Phases 6 (the remaining 26 levels) and 7 (shell,
 IndexedDB save, settings, deploy) are next.
+
+The **27 real Aetheria Guidebook frequencies** (174 Hz → 6336 Hz, SOURCE = 2178 Hz)
+are loaded as the canonical `frequency_hz`. Because the audio is meant to be
+*felt, not heard*, the engine sounds a `playback_hz` that octave-folds each true
+frequency into ~27–110 Hz (pure octaves preserve each note's identity). Digital
+roots are computed from the true values (GUT/HEAD: 3-6-9; HEART: all 9, the +243
+order).
+
+**Sensors:** a Muse EEG headband (cortical coherence + frequency prescription)
+and/or a **Polar H10** chest strap (HRV / heart coherence). Either can be paired
+from the setup bar; when the Polar is connected its heart-coherence is fused with
+the EEG/behaviour coherence (heart leads in Manual Mode, EEG leads with a Muse).
 
 ## Hard rules honored
 

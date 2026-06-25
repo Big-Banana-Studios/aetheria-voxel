@@ -51,6 +51,7 @@ export class EEGDebugOverlay {
     const idx = s.getPrescribedFrequencyIndex();
     const entry = this.freqTable.get(idx);
     const hz = this.freqTable.hz(idx);
+    const felt = this.freqTable.playbackHz(idx);
     const bar = (v: number, w = 12) => {
       const n = Math.round(Math.max(0, Math.min(1, v)) * w);
       return '█'.repeat(n) + '·'.repeat(w - n);
@@ -72,8 +73,10 @@ export class EEGDebugOverlay {
       `θ/α (relax): ${b.thetaAlphaRatio.toFixed(2)}`,
       `β/γ (focus): ${b.betaGammaRatio.toFixed(2)}`,
       ``,
-      `prescribed : #${idx} ${entry.regime}-${entry.regime_position}`,
-      `frequency  : ${hz > 0 ? hz.toFixed(2) + ' Hz' : '— (placeholder)'}`,
+      `prescribed : #${idx} ${entry.regime}-${entry.regime_position}${entry.is_source ? ' [SOURCE]' : ''}`,
+      `true freq  : ${hz > 0 ? hz.toFixed(0) + ' Hz' : '— (placeholder)'}`,
+      `felt (play): ${felt > 0 ? felt.toFixed(2) + ' Hz' : '—'}`,
+      `effect     : ${entry.aetheria_effect ?? ''}`,
       `level      : ${entry.level_name}`,
     ].join('\n');
   }

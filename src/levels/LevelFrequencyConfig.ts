@@ -12,7 +12,8 @@ export interface LevelFrequencyConfig {
   levelIndex: number; // 0..26
   levelName: string;
   regime: 'GUT' | 'HEART' | 'HEAD';
-  frequencyHz: number; // from data file — resolved at load, never hardcoded
+  frequencyHz: number; // TRUE Aetheria value — resolved at load, never hardcoded
+  playbackHz: number; // felt octave-folded equivalent the audio engine sounds
   digitalRoot: 3 | 6 | 9;
   therapeuticTarget: string;
   solfeggioNote?: string;
@@ -54,7 +55,8 @@ export function buildConfig(
     levelIndex: entry.index,
     levelName: entry.level_name,
     regime: entry.regime,
-    frequencyHz: entry.frequency_hz, // resolved from the table
+    frequencyHz: entry.frequency_hz, // resolved from the table (true value)
+    playbackHz: entry.playback_hz || entry.frequency_hz, // felt equivalent
     digitalRoot: entry.digital_root,
     therapeuticTarget: entry.therapeutic_target,
     solfeggioNote: entry.solfeggio_note,

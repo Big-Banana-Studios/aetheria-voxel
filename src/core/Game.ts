@@ -20,6 +20,7 @@ import { FrequencyTable } from './FrequencyTable';
 import { AudioStack } from '../audio/AudioStack';
 import { MuseClient } from '../eeg/MuseClient';
 import { ManualMode } from '../eeg/ManualMode';
+import { PolarClient } from '../eeg/PolarClient';
 import { EEGDebugOverlay } from '../eeg/EEGDebugOverlay';
 import type { CoherenceSource } from '../eeg/types';
 import { HUD } from '../ui/HUD';
@@ -51,6 +52,7 @@ export class Game {
   private freqTable!: FrequencyTable;
   private muse!: MuseClient;
   private manual = new ManualMode();
+  private polar = new PolarClient();
   private usingMuse = false;
 
   private level: LevelBase | null = null;
@@ -109,6 +111,7 @@ export class Game {
     // HUD setup-bar wiring.
     this.hud.onConnectMuse = () => this.connectMuse();
     this.hud.onManualMode = () => this.startManual();
+    this.hud.onConnectPolar = () => this.polar.connect();
 
     // Manual frequency selection (number keys 1–9) — the radial menu's keyboard
     // equivalent (Section 5.4).
@@ -219,10 +222,22 @@ export class Game {
     const meditating = this.player.isMeditating || this.isNearMeditation();
     if (!this.usingMuse) this.manual.update(dt, moved, meditating);
 
+    // Polar H10 heart coherence (optional, fuses with the active source).
+    this.polar.update(dt);
+
     const source = this.getSource();
-    const coherence = source.getCoherenceScore();
+    const baseCoherence = source.getCoherenceScore();
     const freqIndex = source.getPrescribedFrequencyIndex();
     const bands = source.getBandPowers();
+
+    // Fuse heart (HRV) coherence with the EEG/behaviour coherence when the
+    // Polar H10 is connected. Heart coherence leads in Manual Mode (it is a real
+    // biosignal); EEG leads when a Muse is streaming.
+    let coherence = baseCoherence;
+    if (this.polar.isConnected) {
+      const hc = this.polar.getHeartCoherence();
+      coherence = this.usingMuse ? 0.6 * baseCoherence + 0.4 * hc : 0.4 * baseCoherence + 0.6 * hc;
+    }
 
     // Drive the level (which drives world shader, audio, and every prop).
     if (this.level) {
@@ -248,6 +263,9 @@ export class Game {
       nearMeditation: this.isNearMeditation(),
       puzzlesSolved: lvl?.puzzlesSolvedCount ?? 0,
       puzzleTotal: lvl?.puzzleTotal ?? 0,
+      heartConnected: this.polar.isConnected,
+      heartCoherence: this.polar.getHeartCoherence(),
+      bpm: this.polar.heartRate,
     });
     this.debug.update();
   }
@@ -270,5 +288,6 @@ export class Game {
     this.world.dispose();
     this.audio.dispose();
     this.muse.disconnect();
+    this.polar.disconnect();
   }
 }

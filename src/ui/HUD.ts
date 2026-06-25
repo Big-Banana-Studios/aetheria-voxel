@@ -20,6 +20,9 @@ export interface HUDState {
   nearMeditation: boolean;
   puzzlesSolved: number;
   puzzleTotal: number;
+  heartConnected: boolean;
+  heartCoherence: number;
+  bpm: number;
 }
 
 export class HUD {
@@ -86,6 +89,7 @@ export class HUD {
   // ── Setup bar (Connect Muse / Manual Mode) ──
   onConnectMuse?: () => void;
   onManualMode?: () => void;
+  onConnectPolar?: () => Promise<boolean>;
 
   private buildSetupBar(): HTMLDivElement {
     const bar = document.createElement('div');
@@ -120,9 +124,20 @@ export class HUD {
 
     const connect = mkBtn('Connect Muse', true);
     const manual = mkBtn('Enter in Manual Mode', false);
+    // Polar H10 is optional and pairs alongside either path (adds heart
+    // coherence); clicking it connects but does not enter the Field.
+    const polar = mkBtn('+ Polar H10  ❤', false);
     connect.addEventListener('click', () => this.onConnectMuse?.());
     manual.addEventListener('click', () => this.onManualMode?.());
-    bar.append(connect, manual);
+    polar.addEventListener('click', async () => {
+      if (!this.onConnectPolar) return;
+      polar.textContent = 'Pairing…';
+      polar.disabled = true;
+      const ok = await this.onConnectPolar();
+      polar.textContent = ok ? 'Polar H10  ✓' : '+ Polar H10  ❤';
+      polar.disabled = false;
+    });
+    bar.append(connect, manual, polar);
     return bar;
   }
 
@@ -153,6 +168,7 @@ export class HUD {
     this.arc.setActive(state.freqIndex);
     this.arc.update(dt);
     this.status.update(state.connected, state.quality, state.calibrating);
+    this.status.updateHeart(state.heartConnected, state.heartCoherence, state.bpm);
 
     this.puzzleCount.textContent = `Resonance locks: ${state.puzzlesSolved}/${state.puzzleTotal}`;
 

@@ -127,9 +127,11 @@ export class TemplateLevel extends LevelBase {
       this.addProp(flora);
     });
 
-    // 5. Audio config.
+    // 5. Audio config. The audio engine sounds the FELT (octave-folded)
+    // frequency so the tone is felt rather than heard; the true Aetheria Hz
+    // remains the canonical identity used for display and digital roots.
     this.ctx.audio.setBinauralOffset(cfg.binauralBeatOffset);
-    this.ctx.audio.setFrequency(cfg.frequencyHz);
+    this.ctx.audio.setFrequency(cfg.playbackHz);
 
     // Opening narrative beat.
     this.ctx.speak(this.openingLine());
@@ -148,7 +150,7 @@ export class TemplateLevel extends LevelBase {
   }
 
   onFrequencyPrescribed(freqIndex: number): void {
-    const hz = this.ctx.freqTable.hz(freqIndex);
+    const hz = this.ctx.freqTable.playbackHz(freqIndex);
     if (hz > 0) this.ctx.audio.setFrequency(hz);
   }
 

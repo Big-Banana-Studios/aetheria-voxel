@@ -7,6 +7,7 @@ export class ConnectionStatus {
   readonly el: HTMLDivElement;
   private icon: HTMLSpanElement;
   private label: HTMLSpanElement;
+  private heart: HTMLSpanElement;
 
   constructor() {
     this.el = document.createElement('div');
@@ -29,7 +30,23 @@ export class ConnectionStatus {
     this.label = document.createElement('span');
     this.label.textContent = 'Manual Mode';
 
-    this.el.append(this.icon, this.label);
+    // Heart (Polar H10) indicator — hidden until the sensor connects.
+    this.heart = document.createElement('span');
+    this.heart.style.cssText = 'display:none;margin-left:10px;color:#e88ea8;';
+
+    this.el.append(this.icon, this.label, this.heart);
+  }
+
+  /** Reflect the Polar H10 heart sensor (HRV coherence + bpm). */
+  updateHeart(connected: boolean, coherence: number, bpm: number): void {
+    if (!connected) {
+      this.heart.style.display = 'none';
+      return;
+    }
+    this.heart.style.display = 'inline';
+    const pct = Math.round(coherence * 100);
+    this.heart.textContent = `❤ ${bpm > 0 ? Math.round(bpm) + ' bpm · ' : ''}coh ${pct}%`;
+    this.heart.style.opacity = String(0.6 + coherence * 0.4);
   }
 
   /** quality 0..1; connected = EEG source active; calibrating optional. */

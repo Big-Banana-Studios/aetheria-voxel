@@ -12,10 +12,15 @@ export interface FrequencyEntry {
   index: number;
   regime: 'GUT' | 'HEART' | 'HEAD';
   regime_position: number;
-  frequency_hz: number; // 0.0 until owner provides the real value
+  frequency_hz: number; // TRUE Aetheria value — single source of truth
+  playback_hz: number; // felt sub-bass/low-bass equivalent (octave-folded)
+  order?: number; // harmonic order (1-9) per the Guidebook
   digital_root: 3 | 6 | 9;
   solfeggio_note: string;
   therapeutic_target: string;
+  aetheria_effect?: string; // Guidebook effect label
+  is_source?: boolean; // 2178 Hz — cube centre / Compassion
+  is_completion?: boolean; // 6336 Hz — outermost vertex
   level_name: string;
   binaural_offset_hz: number;
   coherence_threshold: number;
@@ -56,8 +61,19 @@ export class FrequencyTable {
     return e;
   }
 
+  /** The true Aetheria frequency (for display, digital roots, prescription). */
   hz(index: number): number {
     return this.get(index)?.frequency_hz ?? 0;
+  }
+
+  /**
+   * The felt playback frequency the audio engine should sound — octave-folded
+   * into the low/sub-bass band so the tone is felt rather than heard. Falls back
+   * to the true Hz if no playback value is present.
+   */
+  playbackHz(index: number): number {
+    const e = this.get(index);
+    return e?.playback_hz || e?.frequency_hz || 0;
   }
 
   /** True if the owner's real Hz values have been dropped in (not all zero). */
