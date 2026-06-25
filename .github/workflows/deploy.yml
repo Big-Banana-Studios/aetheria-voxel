@@ -1,15 +1,12 @@
-name: Deploy Aetheria Voxel to GitHub Pages
+# Build the Vite app and deploy the built dist/ to GitHub Pages.
+# (GitHub's "static content" starter uploads the whole repo with `path: '.'`,
+#  which would serve the un-built source — black screen. We build first and
+#  upload `dist/`. configure-pages keeps the Pages source on "GitHub Actions".)
+name: Deploy Aetheria Voxel to Pages
 
-# Deploys via GitHub's first-party Pages artifact flow. `actions/configure-pages`
-# sets the Pages source to "GitHub Actions" on every run, so the deployment can
-# never silently revert to serving the raw `main` branch source. No branch to
-# point at, no local tooling, no personal login — just push main.
-#
-# (If Pages was previously "Deploy from a branch", this flips it to Actions
-# automatically on the next run.)
 on:
   push:
-    branches: [main]
+    branches: ["main"]
   workflow_dispatch:
 
 permissions:
@@ -18,33 +15,33 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: "pages"
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
   deploy:
-    needs: build
-    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
     steps:
-      - id: deployment
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Build
+        run: npm run build
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "dist"
+      - name: Deploy to GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v4
