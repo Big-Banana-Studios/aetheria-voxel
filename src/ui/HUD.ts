@@ -9,6 +9,8 @@
 import { CoherenceMandala } from './CoherenceMandala';
 import { FrequencyArc } from './FrequencyArc';
 import { ConnectionStatus } from './ConnectionStatus';
+import { CubeMiniMap } from './CubeMiniMap';
+import type { FrequencyTable } from '../core/FrequencyTable';
 
 export interface HUDState {
   coherence: number;
@@ -23,12 +25,16 @@ export interface HUDState {
   heartConnected: boolean;
   heartCoherence: number;
   bpm: number;
+  levelIndex: number;
+  completed: Set<number>;
+  unlocked: Set<number>;
 }
 
 export class HUD {
   private mandala = new CoherenceMandala();
   private arc = new FrequencyArc();
   private status = new ConnectionStatus();
+  private cube: CubeMiniMap;
   private subtitle: HTMLDivElement;
   private prompt: HTMLDivElement;
   private puzzleCount: HTMLDivElement;
@@ -36,10 +42,12 @@ export class HUD {
   private setupBar: HTMLDivElement;
   private subtitleTimer = 0;
 
-  constructor(private root: HTMLElement) {
+  constructor(private root: HTMLElement, freqTable: FrequencyTable) {
     root.appendChild(this.mandala.el);
     root.appendChild(this.arc.el);
     root.appendChild(this.status.el);
+    this.cube = new CubeMiniMap(freqTable);
+    root.appendChild(this.cube.el);
 
     this.subtitle = this.makeCenterText('', 'bottom:220px', '1.05rem', '#e8e0f0');
     this.subtitle.style.maxWidth = '46rem';
@@ -152,6 +160,26 @@ export class HUD {
     this.arc.setRegime(regime);
   }
 
+  // ── Cube mini-map passthrough ──
+  set onSelectNode(cb: (index: number) => void) {
+    this.cube.onSelectNode = cb;
+  }
+  toggleCube(): void {
+    this.cube.toggleHero();
+  }
+  showCubeHero(): void {
+    this.cube.setMode('hero');
+  }
+  hideCubeHero(): void {
+    this.cube.setMode('corner');
+  }
+  get cubeIsHero(): boolean {
+    return this.cube.isHero;
+  }
+  bloomNode(index: number): void {
+    this.cube.bloom(index);
+  }
+
   speak(line: string): void {
     this.subtitle.textContent = line;
     this.subtitle.style.opacity = '1';
@@ -162,6 +190,9 @@ export class HUD {
     this.banner.innerHTML = `<div>The node is restored</div><div style="font-size:1rem;opacity:0.7;margin-top:0.5rem">${levelName}</div>`;
     this.banner.style.opacity = '1';
   }
+  hideCompletion(): void {
+    this.banner.style.opacity = '0';
+  }
 
   update(dt: number, state: HUDState): void {
     this.mandala.update(state.coherence, state.meditationProgress);
@@ -169,6 +200,9 @@ export class HUD {
     this.arc.update(dt);
     this.status.update(state.connected, state.quality, state.calibrating);
     this.status.updateHeart(state.heartConnected, state.heartCoherence, state.bpm);
+
+    this.cube.setProgress(state.levelIndex, state.completed, state.unlocked);
+    this.cube.update(dt, state.coherence);
 
     this.puzzleCount.textContent = `Resonance locks: ${state.puzzlesSolved}/${state.puzzleTotal}`;
 

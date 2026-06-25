@@ -29,6 +29,7 @@ runs Manual Mode.
 - **F** — Focus on a reactive block
 - **M** — enter/leave Meditation stance
 - **1–9** — (Manual Mode) select a frequency within the regime
+- **C** — open the Lo Shu cube (hero view); click an unlocked node to travel
 - **`** (backtick) — toggle the EEG debug overlay
 - **Esc** — release the cursor
 
@@ -51,11 +52,14 @@ public/data/ aetheria-frequency-table.json   ← single source of truth
 
 ### Status
 
-Phases 1–5 of the GDD build order are complete: project foundation, voxel
-engine, EEG pipeline (ported from the validated Coherence Lab driver), audio,
-and one fully playable template level — **GUT-1, Volcanic Core** — with every
-system working end to end. Phases 6 (the remaining 26 levels) and 7 (shell,
-IndexedDB save, settings, deploy) are next.
+Phases 1–6 of the GDD build order are complete plus Selah's "Phase B": project
+foundation, voxel engine, EEG pipeline, audio, the level framework, and **all 27
+levels** across the three regimes (GUT magma caverns, HEART river gardens, HEAD
+floating cosmic platforms), navigable via the **Lo Shu cube** map (the 27
+frequencies as a 3×3×3 magic cube — GUT bottom, HEART middle, HEAD crown, 2178 Hz
+at the centre). Progress is saved to localStorage; levels unlock in order within
+a regime, regimes in any order. Phase 7 (full menus, IndexedDB save schema,
+settings, deploy) is next.
 
 The **27 real Aetheria Guidebook frequencies** (174 Hz → 6336 Hz, SOURCE = 2178 Hz)
 are loaded as the canonical `frequency_hz`. Because the audio is meant to be

@@ -26,7 +26,7 @@ import type { CoherenceSource } from '../eeg/types';
 import { HUD } from '../ui/HUD';
 import { buildConfig } from '../levels/LevelFrequencyConfig';
 import { TemplateLevel } from '../levels/TemplateLevel';
-import { GUT1_BUILD } from '../levels/definitions/gut1';
+import { buildParamsForLevel } from '../levels/buildParams';
 import { LevelBase } from '../levels/LevelBase';
 import { SignalLog } from './SignalLog';
 
@@ -47,8 +47,11 @@ export class Game {
   private world = new World();
   private player!: PlayerController;
   private audio = new AudioStack();
-  private hud: HUD;
+  private hud!: HUD;
   private debug!: EEGDebugOverlay;
+
+  private completedLevels = new Set<number>();
+  private unlockedLevels = new Set<number>();
 
   private freqTable!: FrequencyTable;
   private muse!: MuseClient;
@@ -64,6 +67,7 @@ export class Game {
   private playStateListeners: ((p: boolean) => void)[] = [];
 
   private propGroup = new THREE.Group();
+  private starfield!: THREE.Points;
 
   private signalLog = new SignalLog();
   private logAccum = 0;
@@ -72,7 +76,6 @@ export class Game {
     this.renderer = new THREE.WebGLRenderer({ canvas: opts.canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    this.hud = new HUD(opts.hud);
   }
 
   async init(): Promise<void> {
@@ -90,6 +93,10 @@ export class Game {
     dir.position.set(0.5, 1, 0.3);
     this.scene.add(hemi, dir);
 
+    // Starfield for the HEAD regime (hidden otherwise).
+    this.starfield = this.makeStarfield();
+    this.scene.add(this.starfield);
+
     // Post-process: bloom carries the "earned with the mind" luminosity.
     const renderPass = new RenderPass(this.scene, this.camera);
     const bloom = new UnrealBloomPass(
@@ -104,8 +111,12 @@ export class Game {
 
     // Data + EEG.
     this.freqTable = await FrequencyTable.load();
+    this.hud = new HUD(this.opts.hud, this.freqTable);
+    this.hud.onSelectNode = (index) => this.travelToNode(index);
     this.muse = new MuseClient(this.freqTable);
     this.debug = new EEGDebugOverlay(this.opts.hud, () => this.getSource(), this.freqTable);
+
+    this.loadCompleted();
 
     // Player.
     this.player = new PlayerController(this.camera, this.renderer.domElement, this.world);
@@ -122,6 +133,8 @@ export class Game {
     document.addEventListener('keydown', (e) => {
       const n = parseInt(e.key, 10);
       if (!this.usingMuse && n >= 1 && n <= 9) this.manual.selectFrequency(n - 1);
+      // C peeks the Lo Shu cube (hero view) — releases the cursor to navigate.
+      if (e.code === 'KeyC') this.toggleCube();
     });
 
     // Build the reference level (GUT-1).
@@ -136,12 +149,13 @@ export class Game {
       this.world.clear();
     }
     const entry = this.freqTable.get(index);
-    const config = buildConfig(entry, { ...GUT1_BUILD });
+    const config = buildConfig(entry, buildParamsForLevel(index));
 
     const regime = REGIME_INDEX[config.regime];
     this.muse.setRegime(regime);
     this.manual.setRegime(regime);
     this.hud.setRegime(config.regime);
+    this.applySky(config.regime, entry.ambient_color, entry.secondary_color);
 
     const level = new TemplateLevel(config, {
       world: this.world,
@@ -153,10 +167,105 @@ export class Game {
       getSource: () => this.getSource(),
       speak: (line) => this.hud.speak(line),
     });
-    level.onComplete = (lvl) => this.hud.showCompletion(lvl.config.levelName);
+    level.onComplete = (lvl) => this.onLevelComplete(lvl);
     level.build();
     this.level = level;
     this.world.remeshDirty();
+    this.recomputeUnlocked();
+  }
+
+  // ── Progression: completed set, unlock logic, cube navigation ──
+
+  private loadCompleted(): void {
+    try {
+      const raw = localStorage.getItem('aetheria-completed');
+      if (raw) this.completedLevels = new Set(JSON.parse(raw) as number[]);
+    } catch {
+      /* ignore */
+    }
+    this.recomputeUnlocked();
+  }
+
+  private saveCompleted(): void {
+    try {
+      localStorage.setItem('aetheria-completed', JSON.stringify([...this.completedLevels]));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /**
+   * Unlock rule (GDD §10.1): regimes can be entered in any order, but levels
+   * complete in order WITHIN a regime. So a level is unlocked if it is the first
+   * of its regime, already completed, or its in-regime predecessor is completed.
+   */
+  private recomputeUnlocked(): void {
+    const u = new Set<number>();
+    for (let i = 0; i < 27; i++) {
+      const posInRegime = i % 9;
+      if (posInRegime === 0 || this.completedLevels.has(i) || this.completedLevels.has(i - 1)) {
+        u.add(i);
+      }
+    }
+    if (this.level) u.add(this.level.levelIndex);
+    this.unlockedLevels = u;
+  }
+
+  private onLevelComplete(lvl: LevelBase): void {
+    this.completedLevels.add(lvl.levelIndex);
+    this.saveCompleted();
+    this.recomputeUnlocked();
+    this.hud.bloomNode(lvl.levelIndex);
+    this.hud.showCompletion(lvl.config.levelName);
+    // Release the cursor and open the cube so the player can choose where next.
+    this.hud.showCubeHero();
+    this.player.unlock();
+  }
+
+  private travelToNode(index: number): void {
+    if (!this.unlockedLevels.has(index)) return;
+    this.hud.hideCompletion();
+    this.hud.hideCubeHero();
+    this.loadLevel(index);
+    this.requestPlay();
+  }
+
+  private toggleCube(): void {
+    this.hud.toggleCube();
+    if (this.hud.cubeIsHero) this.player.unlock();
+    else this.player.lock();
+  }
+
+  // ── Sky / atmosphere per regime ──
+
+  private makeStarfield(): THREE.Points {
+    const count = 1200;
+    const positions = new Float32Array(count * 3);
+    // Deterministic-ish scatter on a large sphere shell around the level.
+    for (let i = 0; i < count; i++) {
+      const r = 180 + (i % 60);
+      const theta = (i * 2.39996) % (Math.PI * 2); // golden angle
+      const phi = Math.acos(1 - (2 * (i + 0.5)) / count);
+      positions[i * 3] = 24 + r * Math.sin(phi) * Math.cos(theta);
+      positions[i * 3 + 1] = r * Math.cos(phi);
+      positions[i * 3 + 2] = 24 + r * Math.sin(phi) * Math.sin(theta);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({ color: 0xcfc8ff, size: 1.4, sizeAttenuation: false });
+    const pts = new THREE.Points(geo, mat);
+    pts.visible = false;
+    pts.frustumCulled = false;
+    return pts;
+  }
+
+  private applySky(regime: 'GUT' | 'HEART' | 'HEAD', ambient: string, sky: string): void {
+    // Background beyond the chunks + scene fog for the standard-material props.
+    const bg = regime === 'HEART' ? sky : ambient;
+    this.scene.background = new THREE.Color(bg);
+    const fogDensity = regime === 'GUT' ? 0.02 : regime === 'HEART' ? 0.012 : 0.008;
+    this.scene.fog = new THREE.FogExp2(new THREE.Color(ambient).getHex(), fogDensity);
+    this.starfield.visible = regime === 'HEAD';
   }
 
   // ── Coherence source ──
@@ -319,6 +428,9 @@ export class Game {
       heartConnected: this.polar.isConnected,
       heartCoherence: this.polar.getSettledness(),
       bpm: this.polar.heartRate,
+      levelIndex: this.level?.levelIndex ?? 0,
+      completed: this.completedLevels,
+      unlocked: this.unlockedLevels,
     });
     this.debug.update();
   }

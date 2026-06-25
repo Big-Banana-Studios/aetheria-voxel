@@ -183,6 +183,13 @@ export class TemplateLevel extends LevelBase {
   // ── Per-frame ──
 
   override update(dt: number, freqIndex: number, coherence: number, bands: import('../eeg/types').BandPowerResult): void {
+    // Gentle recovery: if the player fell into a crossing/void, return them to
+    // spawn (no death, no penalty — Section 14.2 / Selah "never a wall").
+    if (this.ctx.player.feet.y < 6) {
+      const s = this.layout.spawn;
+      this.ctx.player.spawnAt(s.x + 0.5, s.y, s.z + 0.5);
+    }
+
     super.update(dt, freqIndex, coherence, bands);
 
     // Feed every reactive prop the current state and animate it.
