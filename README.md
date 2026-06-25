@@ -81,6 +81,13 @@ personal login. Trigger a run any time from the Actions tab (workflow_dispatch).
 A `.nojekyll` file ships in the build so Pages serves the bundle verbatim
 (no Jekyll processing).
 
+**Installable PWA.** A web app manifest (`public/manifest.webmanifest`) + icons
+(`public/icons/`) + the offline service worker make Aetheria an installable
+Progressive Web App. Over HTTPS (e.g. the Pages URL), Android Chrome offers
+"Install app" (and the title screen shows an in-app **⤓ Install app** button);
+it then launches standalone, full-screen, and runs offline. iOS can "Add to Home
+Screen" but doesn't support the EEG/HRV sensors (no Web Bluetooth on iOS).
+
 **Installable / offline-first.** Production builds register a service worker
 (`public/sw.js`) that precaches the whole app from a build-time manifest, so
 after a single online visit the game runs fully offline (over HTTPS or

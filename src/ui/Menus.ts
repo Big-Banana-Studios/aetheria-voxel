@@ -7,6 +7,7 @@
  */
 import type { Settings, SettingsData, Difficulty } from '../core/Settings';
 import type { SaveSystem } from '../core/SaveSystem';
+import { canInstall, promptInstall } from './install';
 
 export interface MenuCallbacks {
   onEnter: () => void; // begin / continue → sensor choice
@@ -48,7 +49,15 @@ export class MenuSystem {
     this.panel.style.cssText = 'min-width:320px;max-width:520px;text-align:center;';
     this.overlay.appendChild(this.panel);
     this.root.appendChild(this.overlay);
+
+    // If the browser becomes installable while the title is showing, re-render
+    // so the "Install app" button appears (or disappears after install).
+    window.addEventListener('aetheria:installable', () => {
+      if (this.mainVisible) this.showMain();
+    });
   }
+
+  private mainVisible = false;
 
   private btn(label: string, primary = false): HTMLButtonElement {
     const b = document.createElement('button');
@@ -72,9 +81,10 @@ export class MenuSystem {
   }
 
   show(): void { this.overlay.style.display = 'flex'; }
-  hide(): void { this.overlay.style.display = 'none'; }
+  hide(): void { this.overlay.style.display = 'none'; this.mainVisible = false; }
 
   showMain(): void {
+    this.mainVisible = true;
     this.panel.innerHTML = '';
     this.panel.appendChild(this.title());
     const completed = this.save.data.levelsCompleted;
@@ -87,6 +97,12 @@ export class MenuSystem {
     const credits = this.btn('Credits');
     credits.onclick = () => this.showCredits(() => this.showMain());
     this.panel.append(enter, how, settings, credits);
+    // Offer to install as an app when the browser allows it (Android Chrome etc.).
+    if (canInstall()) {
+      const install = this.btn('⤓ Install app');
+      install.onclick = () => void promptInstall().then(() => this.showMain());
+      this.panel.appendChild(install);
+    }
     if (completed > 0) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:14px;opacity:0.5;font-size:0.85rem';
@@ -101,6 +117,7 @@ export class MenuSystem {
   }
 
   showPause(): void {
+    this.mainVisible = false;
     this.panel.innerHTML = '';
     const h = document.createElement('div');
     h.style.cssText = 'font-weight:300;letter-spacing:0.16em;font-size:1.5rem;margin-bottom:1rem';
@@ -202,6 +219,7 @@ export class MenuSystem {
   }
 
   showSettings(back: () => void): void {
+    this.mainVisible = false;
     this.panel.innerHTML = '';
     const h = document.createElement('div');
     h.style.cssText = 'font-weight:300;letter-spacing:0.16em;font-size:1.4rem;margin-bottom:1rem';
@@ -263,6 +281,7 @@ export class MenuSystem {
    *  sensor adds to the depth of the experience. Reachable from the pause menu
    *  and the title. Scrolls; honest language (the body settles — never a score). */
   showHowToPlay(back: () => void): void {
+    this.mainVisible = false;
     this.panel.innerHTML = '';
     const head = document.createElement('div');
     head.style.cssText = 'font-weight:300;letter-spacing:0.16em;font-size:1.5rem;margin-bottom:0.2rem';
@@ -358,7 +377,7 @@ export class MenuSystem {
   }
 
   showCredits(back: () => void): void {
-    this.panel.innerHTML = '';
+    this.mainVisible = false;
     this.panel.innerHTML =
       '<div style="font-weight:300;letter-spacing:0.16em;font-size:1.4rem;margin-bottom:1rem">Credits</div>' +
       '<div style="line-height:1.9;opacity:0.85;font-size:0.95rem">' +

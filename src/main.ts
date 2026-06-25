@@ -3,6 +3,11 @@
  * Entry point. Boots the Game and opens the main menu (Section 9.2).
  */
 import { Game } from './core/Game';
+import { initInstall } from './ui/install';
+
+// Capture the install prompt as early as possible (before the menu renders) so
+// the title can offer an "Install app" button.
+initInstall();
 
 async function boot() {
   const canvas = document.getElementById('scene') as HTMLCanvasElement;
