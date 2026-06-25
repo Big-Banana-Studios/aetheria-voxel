@@ -48,6 +48,7 @@ export class CubeMiniMap {
   private completed = new Set<number>();
   private unlocked = new Set<number>();
   private settledness = 0;
+  private updateAccum = 0; // throttle the costly SVG-filter repaint
 
   onSelectNode?: (index: number) => void;
 
@@ -203,6 +204,13 @@ export class CubeMiniMap {
       this.bloomT += dt;
       if (this.bloomT > 1.2) this.bloomIndex = -1;
     }
+
+    // Repainting 27 SVG drop-shadow filters every frame is expensive (it can
+    // stall weaker GPUs, especially in the large hero view). The glow only
+    // breathes slowly, so ~20 Hz is plenty; run full-rate only during a bloom.
+    this.updateAccum += dt;
+    if (this.updateAccum < 0.05 && this.bloomIndex < 0) return;
+    this.updateAccum = 0;
 
     for (const n of this.nodes) {
       const c = this.circles[n.index];

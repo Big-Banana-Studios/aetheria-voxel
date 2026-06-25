@@ -68,6 +68,15 @@ export class SaveSystem {
       upgrade(db) {
         if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
       },
+      // If a newer version wants in (another tab), let go so it isn't blocked —
+      // and never hold the open hostage to a stale connection.
+      blocking: () => {
+        try {
+          this.db?.close();
+        } catch {
+          /* ignore */
+        }
+      },
     });
     const loaded = (await this.db.get(STORE, KEY)) as AetheriaSave | undefined;
     if (loaded) {

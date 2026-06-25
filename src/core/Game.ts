@@ -43,6 +43,17 @@ export interface GameOptions {
 
 const REGIME_INDEX: Record<string, 0 | 1 | 2> = { GUT: 0, HEART: 1, HEAD: 2 };
 
+/** Reject if a promise doesn't settle in `ms` — used to keep boot from hanging
+ *  on a blocked IndexedDB or a stalled fetch. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms),
+    ),
+  ]);
+}
+
 export class Game {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
@@ -134,9 +145,16 @@ export class Game {
     this.muse = new MuseClient(this.freqTable);
     this.debug = new EEGDebugOverlay(this.opts.hud);
 
-    // Persistent save (IndexedDB) → completed set.
-    await this.save.init();
-    this.completedLevels = this.save.completedSet;
+    // Persistent save (IndexedDB) → completed set. Time-bounded and non-fatal:
+    // if IndexedDB is blocked (e.g. a stale/frozen tab holds it) or unavailable,
+    // continue without persistence rather than hang boot on a black screen.
+    try {
+      await withTimeout(this.save.init(), 6000, 'save.init');
+      this.completedLevels = this.save.completedSet;
+    } catch (e) {
+      console.warn('[Aetheria] Continuing without saved progress:', e);
+      this.completedLevels = new Set();
+    }
     this.recomputeUnlocked();
 
     // Menus + settings + metrics panel.

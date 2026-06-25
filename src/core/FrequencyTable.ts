@@ -44,7 +44,16 @@ export class FrequencyTable {
     // Vite serves /public at the base root; use a base-relative URL so it works
     // under a GitHub Pages subpath too.
     const base = import.meta.env.BASE_URL ?? '/';
-    const res = await fetch(`${base}${url}`);
+    // Time-bound the fetch so a stalled network / service worker can never hang
+    // boot on a black "awakening" screen — fail fast and let the caller recover.
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 10000);
+    let res: Response;
+    try {
+      res = await fetch(`${base}${url}`, { signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) throw new Error(`Failed to load frequency table: ${res.status}`);
     const data = (await res.json()) as FrequencyTableData;
     if (!Array.isArray(data.frequencies) || data.frequencies.length !== 27) {
