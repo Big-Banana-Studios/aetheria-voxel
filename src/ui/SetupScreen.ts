@@ -91,38 +91,45 @@ export class SetupScreen {
 
   // ── Step 1: sensors ──
   private renderSensors(): void {
+    this.step = 'sensors';
     this.panel.innerHTML = '';
     this.panel.appendChild(this.heading('Prepare to enter', 'Connect a sensor for the full experience, or enter in Manual Mode — a complete path either way.'));
 
+    // Connecting a sensor does NOT advance the screen — you can pair the Muse
+    // AND the Polar here, then hit Continue. (Previously the Muse auto-jumped to
+    // the signal check, stranding the Polar connect.)
     const muse = this.btn(this.museConnected ? 'Muse  ✓ connected' : 'Connect Muse (EEG)', !this.museConnected);
     muse.onclick = async () => {
       if (this.museConnected) return;
       muse.textContent = 'Pairing…'; muse.disabled = true;
       this.museConnected = await this.cb.connectMuse();
+      if (!this.museConnected) muse.textContent = 'No Muse found — try again';
       muse.disabled = false;
-      if (this.museConnected) this.gotoQuality();
-      else { muse.textContent = 'No Muse found — try again'; }
+      this.renderSensors(); // re-render so Continue appears, Polar still available
     };
 
-    const polar = this.btn(this.polarConnected ? 'Polar H10  ✓ connected' : '+ Polar H10 (heart)');
+    const polar = this.btn(this.polarConnected ? 'Polar H10  ✓ connected' : '+ Polar H10 (heart)', false);
     polar.onclick = async () => {
+      if (this.polarConnected) return;
       polar.textContent = 'Pairing…'; polar.disabled = true;
       this.polarConnected = await this.cb.connectPolar();
       polar.disabled = false;
-      polar.textContent = this.polarConnected ? 'Polar H10  ✓ connected' : '+ Polar H10 (heart)';
+      this.renderSensors();
     };
+
+    this.panel.append(muse, polar);
+
+    // Continue appears once any sensor is paired → signal check (Muse) or
+    // straight to the baseline (Polar-only). Add sensors in any order first.
+    if (this.museConnected || this.polarConnected) {
+      const cont = this.btn('Continue', true);
+      cont.onclick = () => (this.museConnected ? this.gotoQuality() : this.gotoCalibrate());
+      this.panel.appendChild(cont);
+    }
 
     const manual = this.btn('Enter in Manual Mode');
     manual.onclick = () => { this.hide(); this.cb.manual(); };
-
-    this.panel.append(muse, polar, manual);
-
-    // If only Polar (no Muse), allow calibrating the heart baseline too.
-    if (this.polarConnected) {
-      const cont = this.btn('Continue', true);
-      cont.onclick = () => this.gotoCalibrate();
-      this.panel.appendChild(cont);
-    }
+    this.panel.appendChild(manual);
   }
 
   private gotoQuality(): void {
@@ -165,9 +172,11 @@ export class SetupScreen {
 
     const cont = this.btn('Begin Calibration', true);
     cont.onclick = () => this.gotoCalibrate();
+    const back = this.btn('← Back (add a sensor)');
+    back.onclick = () => this.renderSensors();
     const skip = this.btn('Skip — enter now');
     skip.onclick = () => { this.hide(); this.cb.enter(); };
-    this.panel.append(cont, skip);
+    this.panel.append(cont, back, skip);
   }
 
   private gotoCalibrate(): void {
