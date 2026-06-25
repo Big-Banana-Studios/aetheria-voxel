@@ -132,7 +132,7 @@ export class Game {
     this.hud = new HUD(this.opts.hud, this.freqTable);
     this.hud.onSelectNode = (index) => this.travelToNode(index);
     this.muse = new MuseClient(this.freqTable);
-    this.debug = new EEGDebugOverlay(this.opts.hud, () => this.getSource(), this.freqTable);
+    this.debug = new EEGDebugOverlay(this.opts.hud);
 
     // Persistent save (IndexedDB) → completed set.
     await this.save.init();
@@ -599,7 +599,46 @@ export class Game {
       completed: this.completedLevels,
       unlocked: this.unlockedLevels,
     });
-    this.debug.update();
+
+    // Live tuning HUD (backtick) — the actual gate components for device tuning.
+    const mm = this.muse.getMetrics();
+    const as = this.audio.getAudioState();
+    const dEntry = this.freqTable.get(freqIndex);
+    this.debug.update({
+      source: this.usingMuse && this.muse.isConnected ? 'muse' : 'manual',
+      settleSource,
+      settle: coherence,
+      threshold: this.level?.coherenceThreshold ?? 0,
+      sustain: this.level?.settleSustainSeconds ?? 0,
+      sustainReq: this.level?.requiredSustainSeconds ?? 0,
+      dwell: this.level?.meditationDwellSeconds ?? 0,
+      maxDwell: this.level?.maxDwell ?? 0,
+      inMeditation: this.level?.isInMeditationSpace ?? false,
+      gateProgress: lvl?.gateProgress ?? 0,
+      puzzlesSolved: lvl?.puzzlesSolvedCount ?? 0,
+      puzzleTotal: lvl?.puzzleTotal ?? 0,
+      polarConnected: this.polar.isConnected,
+      hr: this.polar.heartRate,
+      rmssd: this.polar.getRmssd(),
+      rmssdBaseline: this.polar.baselineRmssd,
+      hrvSettle: this.polar.getSettledness(),
+      museConnected: this.muse.isConnected,
+      quality: mm.quality,
+      plv: mm.plvCoherence,
+      stillness: mm.stillness,
+      thetaAlpha: mm.thetaAlphaRatio,
+      betaGamma: mm.betaGammaRatio,
+      bands: { delta: mm.deltaRel, theta: mm.thetaRel, alpha: mm.alphaRel, beta: mm.betaRel, gamma: mm.gammaRel },
+      hbo: mm.hbo,
+      hbr: mm.hbr,
+      battery: mm.battery,
+      freqIndex,
+      regimePos: `${dEntry.regime}-${dEntry.regime_position}`,
+      trueHz: as.trueHz || dEntry.frequency_hz,
+      feltHz: as.carrierHz,
+      subHz: as.subBass.subHz,
+      subBand: as.subBass.band,
+    });
   }
 
   private isNearMeditation(): boolean {

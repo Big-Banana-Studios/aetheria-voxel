@@ -150,5 +150,16 @@ export abstract class LevelBase {
     return this.meditationDwell;
   }
 
+  /** Live tuning readouts. */
+  get settleSustainSeconds(): number {
+    return this.sustainedCoherenceTimer;
+  }
+  get requiredSustainSeconds(): number {
+    return this.requiredSustainedSeconds;
+  }
+  get maxDwell(): number {
+    return this.maxDwellSeconds;
+  }
+
   abstract dispose(): void;
 }

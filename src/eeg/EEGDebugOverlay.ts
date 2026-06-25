@@ -1,39 +1,66 @@
 /**
- * EEGDebugOverlay — dev HUD (Phase 3): band powers, coherence, prescribed
- * frequency, per-electrode quality. Toggle with the backtick (`) key. Hidden by
- * default; this is a development aid, not part of the player-facing HUD.
+ * EEGDebugOverlay — live tuning HUD (dev). Toggle with the backtick (`) key.
+ *
+ * Unlike the player-facing panels, this shows the ACTUAL gate components live so
+ * the device tuning loop is data-driven: the fused settle signal + which source
+ * produced it, the level thresholds/timers, raw Polar (HR/RMSSD/baseline) and
+ * Muse (PLV/stillness/bands/quality) values, and the resolved audio (true/felt/
+ * sub-bass) frequencies. Fed a snapshot from Game each frame.
  */
-import type { CoherenceSource } from './types';
-import type { FrequencyTable } from '../core/FrequencyTable';
+
+export interface TuningSnapshot {
+  source: 'muse' | 'manual';
+  settleSource: 'hrv' | 'stillness' | 'behaviour';
+  settle: number; // fused gate value 0..1
+  threshold: number;
+  sustain: number;
+  sustainReq: number;
+  dwell: number;
+  maxDwell: number;
+  inMeditation: boolean;
+  gateProgress: number;
+  puzzlesSolved: number;
+  puzzleTotal: number;
+  // Polar
+  polarConnected: boolean;
+  hr: number;
+  rmssd: number | null;
+  rmssdBaseline: number | null;
+  hrvSettle: number;
+  // Muse
+  museConnected: boolean;
+  quality: { tp9: number; af7: number; af8: number; tp10: number };
+  plv: number;
+  stillness: number;
+  thetaAlpha: number;
+  betaGamma: number;
+  bands: { delta: number; theta: number; alpha: number; beta: number; gamma: number };
+  hbo: number | null;
+  hbr: number | null;
+  battery: number | null;
+  // Audio / frequency
+  freqIndex: number;
+  regimePos: string;
+  trueHz: number;
+  feltHz: number;
+  subHz: number;
+  subBand: string;
+}
 
 export class EEGDebugOverlay {
   private el: HTMLDivElement;
   private visible = false;
 
-  constructor(
-    parent: HTMLElement,
-    private source: () => CoherenceSource,
-    private freqTable: FrequencyTable,
-  ) {
+  constructor(parent: HTMLElement) {
     this.el = document.createElement('div');
     this.el.style.cssText = [
-      'position:fixed',
-      'top:8px',
-      'left:8px',
-      'z-index:50',
-      'font:11px/1.4 ui-monospace,Consolas,monospace',
-      'color:#9ad6c8',
-      'background:rgba(8,5,16,0.82)',
-      'border:1px solid rgba(154,214,200,0.25)',
-      'border-radius:6px',
-      'padding:8px 10px',
-      'min-width:220px',
-      'pointer-events:none',
-      'white-space:pre',
-      'display:none',
+      'position:fixed', 'top:8px', 'left:168px', 'z-index:50',
+      'font:11px/1.45 ui-monospace,Consolas,monospace', 'color:#9ad6c8',
+      'background:rgba(8,5,16,0.85)', 'border:1px solid rgba(154,214,200,0.25)',
+      'border-radius:6px', 'padding:8px 10px', 'min-width:260px',
+      'pointer-events:none', 'white-space:pre', 'display:none',
     ].join(';');
     parent.appendChild(this.el);
-
     document.addEventListener('keydown', (e) => {
       if (e.code === 'Backquote') this.toggle();
     });
@@ -44,40 +71,32 @@ export class EEGDebugOverlay {
     this.el.style.display = this.visible ? 'block' : 'none';
   }
 
-  update(): void {
+  update(s: TuningSnapshot): void {
     if (!this.visible) return;
-    const s = this.source();
-    const b = s.getBandPowers();
-    const idx = s.getPrescribedFrequencyIndex();
-    const entry = this.freqTable.get(idx);
-    const hz = this.freqTable.hz(idx);
-    const felt = this.freqTable.playbackHz(idx);
-    const bar = (v: number, w = 12) => {
+    const bar = (v: number, w = 10) => {
       const n = Math.round(Math.max(0, Math.min(1, v)) * w);
       return '█'.repeat(n) + '·'.repeat(w - n);
     };
+    const f = (v: number | null, d = 2) => (v == null ? '—' : v.toFixed(d));
 
     this.el.textContent = [
-      `AETHERIA EEG DEBUG  (\` to hide)`,
-      `source     : ${s.isConnected ? 'MUSE' : 'MANUAL/SIM'}`,
-      `quality    : ${(s.connectionQuality * 100).toFixed(0)}%`,
+      `AETHERIA TUNING HUD            (\` hide)`,
       ``,
-      `coherence  : ${bar(s.getCoherenceScore())} ${(s.getCoherenceScore() * 100).toFixed(0)}%`,
+      `GATE  ${bar(s.settle)} ${(s.settle * 100).toFixed(0)}%  via ${s.settleSource}`,
+      `  threshold ${s.threshold.toFixed(2)}  ${s.settle >= s.threshold ? 'OPEN' : 'below'}`,
+      `  meditate  ${s.inMeditation ? 'IN ' : 'out'}  sustain ${s.sustain.toFixed(1)}/${s.sustainReq}s`,
+      `  dwell ${s.dwell.toFixed(0)}/${s.maxDwell}s  gate ${(s.gateProgress * 100).toFixed(0)}%  locks ${s.puzzlesSolved}/${s.puzzleTotal}`,
       ``,
-      `delta rel  : ${bar(b.deltaRel)} ${b.deltaRel.toFixed(2)}`,
-      `theta rel  : ${bar(b.thetaRel)} ${b.thetaRel.toFixed(2)}`,
-      `alpha rel  : ${bar(b.alphaRel)} ${b.alphaRel.toFixed(2)}`,
-      `beta  rel  : ${bar(b.betaRel)} ${b.betaRel.toFixed(2)}`,
-      `gamma rel  : ${bar(b.gammaRel)} ${b.gammaRel.toFixed(2)}`,
+      `POLAR ${s.polarConnected ? 'on ' : 'off'}  hr ${f(s.hr, 0)} bpm`,
+      `  rmssd ${f(s.rmssd, 0)} / base ${f(s.rmssdBaseline, 0)} ms  settle ${f(s.hrvSettle)}`,
       ``,
-      `θ/α (relax): ${b.thetaAlphaRatio.toFixed(2)}`,
-      `β/γ (focus): ${b.betaGammaRatio.toFixed(2)}`,
+      `MUSE  ${s.museConnected ? 'on ' : 'off'}  q ${(s.quality.tp9).toFixed(1)} ${(s.quality.af7).toFixed(1)} ${(s.quality.af8).toFixed(1)} ${(s.quality.tp10).toFixed(1)}`,
+      `  still ${f(s.stillness)}  plv ${f(s.plv)}  θ/α ${f(s.thetaAlpha)}  β/γ ${f(s.betaGamma)}`,
+      `  δ${f(s.bands.delta)} θ${f(s.bands.theta)} α${f(s.bands.alpha)} β${f(s.bands.beta)} γ${f(s.bands.gamma)}`,
+      `  fNIRS HbO ${f(s.hbo, 1)} HbR ${f(s.hbr, 1)}  batt ${f(s.battery, 0)}%`,
       ``,
-      `prescribed : #${idx} ${entry.regime}-${entry.regime_position}${entry.is_source ? ' [SOURCE]' : ''}`,
-      `true freq  : ${hz > 0 ? hz.toFixed(0) + ' Hz' : '— (placeholder)'}`,
-      `felt (play): ${felt > 0 ? felt.toFixed(2) + ' Hz' : '—'}`,
-      `effect     : ${entry.aetheria_effect ?? ''}`,
-      `level      : ${entry.level_name}`,
+      `FREQ #${s.freqIndex} ${s.regimePos}  true ${s.trueHz.toFixed(0)}Hz`,
+      `  felt ${s.feltHz.toFixed(1)}Hz  sub ${s.subHz.toFixed(2)}Hz ${s.subBand}`,
     ].join('\n');
   }
 }
