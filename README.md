@@ -71,11 +71,12 @@ directly. `vite.config.ts` uses a relative `base`, so it works under a project
 subpath (`user.github.io/<repo>/`) or a custom domain.
 
 **One-time setup:** Settings → Pages → Build and deployment → Source →
-**"GitHub Actions"**. After that, every `git push origin main` triggers
-`.github/workflows/deploy.yml`, which builds on GitHub's runners and deploys
-with GitHub's first-party Pages action — no local tooling, no personal login,
-no tokens to manage (it uses the workflow's built-in OIDC id-token). Trigger a
-run any time from the Actions tab (workflow_dispatch) too.
+**"Deploy from a branch"** → Branch **`gh-pages`** → Folder **`/ (root)`**.
+
+After that, every `git push origin main` runs `.github/workflows/deploy.yml`,
+which builds on GitHub's runners and force-pushes the built `dist/` to the
+`gh-pages` branch using the workflow's built-in token — no local tooling, no
+personal login. Trigger a run any time from the Actions tab (workflow_dispatch).
 
 A `.nojekyll` file ships in the build so Pages serves the bundle verbatim
 (no Jekyll processing).
