@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0a0612" />
+    <title>Aetheria: Resonance of the Spheres</title>
+    <style>
+      :root {
+        --aetheria-bg: #0a0612;
+        --aetheria-text: #e8e0f0;
+        --aetheria-accent: #b48ee8;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--aetheria-bg);
+        color: var(--aetheria-text);
+        font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      #app { position: fixed; inset: 0; }
+      canvas#scene { display: block; width: 100%; height: 100%; touch-action: none; }
+
+      /* HUD overlay layer — SVG/CSS sacred-geometry UI sits on top of the canvas. */
+      #hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #hud .interactive { pointer-events: auto; }
+
+      /* Pointer-lock hint shown before the player clicks in. */
+      #click-to-play {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        background: radial-gradient(circle at center, rgba(20,12,34,0.55), rgba(8,5,16,0.92));
+        cursor: pointer;
+        transition: opacity 0.4s ease;
+      }
+      #click-to-play.hidden { opacity: 0; pointer-events: none; }
+      #click-to-play h1 {
+        font-weight: 300;
+        letter-spacing: 0.18em;
+        font-size: clamp(1.4rem, 4vw, 2.6rem);
+        margin: 0;
+        text-transform: uppercase;
+        color: var(--aetheria-text);
+        text-shadow: 0 0 24px rgba(180, 142, 232, 0.5);
+      }
+      #click-to-play p { opacity: 0.7; font-size: 0.95rem; letter-spacing: 0.05em; margin: 0.2rem 0; }
+      #click-to-play .prompt { margin-top: 1.5rem; opacity: 0.85; font-size: 1.05rem; }
+      #click-to-play .controls { opacity: 0.45; font-size: 0.82rem; max-width: 30rem; text-align: center; line-height: 1.6; }
+
+      #loading {
+        position: fixed; inset: 0; z-index: 30;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--aetheria-bg);
+        letter-spacing: 0.2em; text-transform: uppercase; font-weight: 300;
+        transition: opacity 0.5s ease;
+      }
+      #loading.hidden { opacity: 0; pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="scene"></canvas>
+      <div id="hud"></div>
+      <div id="click-to-play" class="hidden">
+        <h1>Aetheria</h1>
+        <p>Resonance of the Spheres</p>
+        <div class="prompt">Click to enter the Field</div>
+        <div class="controls">
+          WASD to move · Mouse to look · Space to rise · Shift to descend · F to Focus · M to Meditate · Esc to release the cursor
+        </div>
+      </div>
+      <div id="loading">Awakening the Field…</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
