@@ -35,6 +35,7 @@ export class PolarClient {
   private bpm = 0;
   private settledness = 0.0; // 0..1 relative to baseline
   private baseline: number | null = null; // baseline RMSSD (ms)
+  private baselinePending = false; // a guided baseline is in progress → defer capture to the end
   private connected = false;
   private recomputeAccum = 0;
   private listeners = new Map<string, Listener[]>();
@@ -91,10 +92,29 @@ export class PolarClient {
   get hasBaseline(): boolean {
     return this.baseline != null;
   }
-  /** Capture the player's settle baseline (call after a short settle at entry). */
+  /** Begin a guided baseline: clear the old one and defer the actual capture
+   *  until the calibration window ends, so the baseline reflects the full period
+   *  of relaxed resting breath (a stronger, more representative reference). */
+  beginBaseline(): void {
+    this.baseline = null;
+    this.baselinePending = true;
+  }
+
+  /** Capture the player's settle baseline (call after the settle window). Uses
+   *  RMSSD over the rolling window; no-op if too few clean beats have arrived. */
   captureBaseline(): void {
     const v = this.computeRmssd();
-    if (v != null) this.baseline = v;
+    if (v != null) {
+      this.baseline = v;
+      this.baselinePending = false;
+    }
+  }
+
+  /** Finish a guided baseline: capture from the window, then stop deferring so
+   *  the auto-capture fallback can still set one if beats were sparse. */
+  finalizeBaseline(): void {
+    this.captureBaseline();
+    this.baselinePending = false;
   }
 
   on(event: 'connected' | 'disconnected', cb: Listener): void {
@@ -138,7 +158,8 @@ export class PolarClient {
 
     // Auto-capture a baseline once enough beats have accrued (relative, never
     // absolute — the gate compares you to your own start, not a fixed number).
-    if (this.baseline == null) this.captureBaseline();
+    // Suppressed while a guided baseline is pending so we use the full window.
+    if (this.baseline == null && !this.baselinePending) this.captureBaseline();
 
     const target = this.computeSettledness();
     // Smooth toward the new value for a calm meter.

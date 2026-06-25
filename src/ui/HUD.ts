@@ -10,6 +10,7 @@ import { CoherenceMandala } from './CoherenceMandala';
 import { FrequencyArc } from './FrequencyArc';
 import { ConnectionStatus } from './ConnectionStatus';
 import { CubeMiniMap } from './CubeMiniMap';
+import { BreathingGuide } from './BreathingGuide';
 import type { FrequencyTable } from '../core/FrequencyTable';
 
 export interface HUDState {
@@ -28,12 +29,14 @@ export interface HUDState {
   levelIndex: number;
   completed: Set<number>;
   unlocked: Set<number>;
+  breatheGuide: boolean; // show the breathing pacer (working a lock / settling at the gate)
 }
 
 export class HUD {
   private mandala = new CoherenceMandala();
   private arc = new FrequencyArc();
   private status = new ConnectionStatus();
+  private breathing: BreathingGuide;
   private cube: CubeMiniMap;
   private subtitle: HTMLDivElement;
   private prompt: HTMLDivElement;
@@ -47,6 +50,7 @@ export class HUD {
     root.appendChild(this.mandala.el);
     root.appendChild(this.arc.el);
     root.appendChild(this.status.el);
+    this.breathing = new BreathingGuide(root);
     this.cube = new CubeMiniMap(freqTable);
     root.appendChild(this.cube.el);
 
@@ -159,6 +163,11 @@ export class HUD {
 
   setRegime(regime: 'GUT' | 'HEART' | 'HEAD'): void {
     this.arc.setRegime(regime);
+    this.breathing.setRegime(regime);
+  }
+
+  setReduceMotion(v: boolean): void {
+    this.breathing.setReduceMotion(v);
   }
 
   // ── Cube mini-map passthrough ──
@@ -210,6 +219,8 @@ export class HUD {
 
     this.cube.setProgress(state.levelIndex, state.completed, state.unlocked);
     this.cube.update(dt, state.coherence);
+
+    this.breathing.update(dt, state.breatheGuide);
 
     this.puzzleCount.textContent = `Resonance locks: ${state.puzzlesSolved}/${state.puzzleTotal}`;
 

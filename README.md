@@ -70,6 +70,12 @@ Push to `main` and the workflow builds + publishes `dist/` to GitHub Pages
 (enable Pages → "GitHub Actions" in repo settings). `vite.config.ts` uses a
 relative `base`, so it works under a project subpath or a custom domain.
 
+**Installable / offline-first.** Production builds register a service worker
+(`public/sw.js`) that precaches the whole app from a build-time manifest, so
+after a single online visit the game runs fully offline (over HTTPS or
+`localhost` — a browser requirement for service workers). The title screen shows
+the build version; bump `version` in `package.json` to roll a fresh cache.
+
 The **27 real Aetheria Guidebook frequencies** (174 Hz → 6336 Hz, SOURCE = 2178 Hz)
 are loaded as the canonical `frequency_hz`. Because the audio is meant to be
 *felt, not heard*, the engine sounds a `playback_hz` that octave-folds each true
@@ -86,8 +92,9 @@ the EEG/behaviour coherence (heart leads in Manual Mode, EEG leads with a Muse).
 
 - **A = 432 Hz**, never 440. All tones generated natively at 432-based values.
 - **Frequency Hz values are never fabricated.** `aetheria-frequency-table.json`
-  ships with `0.0` placeholders; drop in the owner's real Aetheria values and
-  the audio comes alive. The game runs structurally without them.
+  holds the owner's real Aetheria Guidebook values (174 → 6336 Hz), published here
+  by the Foundation's choice. The engine also runs structurally without them
+  (placeholder `0.0` values degrade gracefully to the felt-audio fallback).
 - **No fail states, no countdown timers, no startle effects.** Therapeutic tool
   for veterans / TBI survivors.
 - **Manual Mode is first-class** — a complete path for players without a headset.
@@ -142,3 +149,11 @@ driver for the Muse S Athena — rather than `muse-js`, since it is the real dri
 for the target hardware. Connect from a user gesture over Web Bluetooth; the
 4-channel stream (TP9, AF7, AF8, TP10) feeds the band-power → coherence →
 prescriber pipeline at 4 Hz.
+
+## License
+
+The **source code** is released under the [MIT License](LICENSE) © 2026 Aetheria
+Foundation. "Aetheria", the Aetheria Guidebook frequency system, and the
+narrative/visual content are creative works of the Aetheria Foundation; the MIT
+grant covers the software, and the Foundation reserves its name and Guidebook IP.
+Made for veterans and anyone who needs a calm place.

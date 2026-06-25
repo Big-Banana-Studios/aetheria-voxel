@@ -11,16 +11,20 @@ import type { ChannelQuality } from '../eeg/types';
 type Step = 'sensors' | 'quality' | 'calibrate' | 'ready';
 
 export interface SetupCallbacks {
-  connectMuse: () => Promise<boolean>;
+  connectMuse: () => Promise<boolean>; // also used to reconnect after a preset change
   connectPolar: () => Promise<boolean>;
-  startCalibration: () => void; // capture baselines (30s)
+  disconnectMuse: () => void;
+  disconnectPolar: () => void;
+  cyclePreset: () => string; // switch to the next optics preset; returns its name
+  startCalibration: () => void; // begin the baseline window (54s of resting breath)
+  finishCalibration: () => void; // capture the baseline at the end of the window
   enter: () => void; // begin the Field
   manual: () => void; // skip straight to Manual Mode
 }
 
 const CHANNELS: (keyof ChannelQuality)[] = ['tp9', 'af7', 'af8', 'tp10'];
 const CH_LABEL: Record<string, string> = { tp9: 'TP9', af7: 'AF7', af8: 'AF8', tp10: 'TP10' };
-const CALIB_SECONDS = 30;
+const CALIB_SECONDS = 54;
 
 /** Live sensor status shown during the signal-check step. */
 export interface SetupStatus {
@@ -29,6 +33,10 @@ export interface SetupStatus {
   ppgStreaming: boolean; // Muse pulse stream producing data
   fnirsStreaming: boolean; // Muse optical (HbO/HbR) producing data
   hbo: number | null;
+  museConnected: boolean; // Muse paired (so we know to show optics rows at all)
+  opticsPackets: number; // optics subpackets received; 0 ⇒ stream not arriving
+  opticsMode: string | null; // e.g. 'OPTICS16' once decoded
+  preset: string; // active Muse preset (for the toggle label)
   polarConnected: boolean;
   calibProgress: number;
 }
@@ -39,6 +47,9 @@ export class SetupScreen {
   private step: Step = 'sensors';
   private museConnected = false;
   private polarConnected = false;
+  private pairingMuse = false; // an in-flight connect attempt (don't let reconcile stomp it)
+  private pairingPolar = false;
+  private notice = ''; // transient message (e.g. "Muse disconnected")
   private calibElapsed = 0;
   private cb!: SetupCallbacks;
 
@@ -79,6 +90,8 @@ export class SetupScreen {
     this.cb = cb;
     this.step = 'sensors';
     this.calibElapsed = 0;
+    this.notice = '';
+    this.pairingMuse = this.pairingPolar = false;
     this.el.style.display = 'flex';
     this.renderSensors();
   }
@@ -89,35 +102,56 @@ export class SetupScreen {
     return this.el.style.display !== 'none';
   }
 
+  /** A small inline "Disconnect" button (secondary, low-emphasis). */
+  private linkBtn(label: string): HTMLButtonElement {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.style.cssText = [
+      'display:inline-block', 'margin:0 0 10px', 'padding:5px 14px',
+      'border-radius:18px', 'border:1px solid rgba(180,142,232,0.3)',
+      'background:transparent', 'color:#c8b8e0', 'opacity:0.8',
+      'font:300 0.82rem "Segoe UI",sans-serif', 'cursor:pointer',
+    ].join(';');
+    return b;
+  }
+
   // ── Step 1: sensors ──
   private renderSensors(): void {
     this.step = 'sensors';
     this.panel.innerHTML = '';
     this.panel.appendChild(this.heading('Prepare to enter', 'Connect a sensor for the full experience, or enter in Manual Mode — a complete path either way.'));
 
+    if (this.notice) {
+      const n = document.createElement('div');
+      n.textContent = this.notice;
+      n.style.cssText = 'margin:-0.4rem 0 0.9rem;color:#d4c050;font:300 0.9rem "Segoe UI",sans-serif;';
+      this.panel.appendChild(n);
+    }
+
     // Connecting a sensor does NOT advance the screen — you can pair the Muse
     // AND the Polar here, then hit Continue. (Previously the Muse auto-jumped to
     // the signal check, stranding the Polar connect.)
-    const muse = this.btn(this.museConnected ? 'Muse  ✓ connected' : 'Connect Muse (EEG)', !this.museConnected);
-    muse.onclick = async () => {
-      if (this.museConnected) return;
-      muse.textContent = 'Pairing…'; muse.disabled = true;
-      this.museConnected = await this.cb.connectMuse();
-      if (!this.museConnected) muse.textContent = 'No Muse found — try again';
-      muse.disabled = false;
-      this.renderSensors(); // re-render so Continue appears, Polar still available
-    };
+    this.deviceRow('Muse (EEG)', this.museConnected, this.pairingMuse,
+      async (b) => {
+        this.pairingMuse = true;
+        b.textContent = 'Pairing…'; b.disabled = true;
+        this.museConnected = await this.cb.connectMuse();
+        this.pairingMuse = false;
+        if (!this.museConnected) this.notice = 'No Muse found — try again, or continue without it.';
+        this.renderSensors(); // re-render so Continue appears, Polar still available
+      },
+      () => { this.cb.disconnectMuse(); this.museConnected = false; this.notice = ''; this.renderSensors(); });
 
-    const polar = this.btn(this.polarConnected ? 'Polar H10  ✓ connected' : '+ Polar H10 (heart)', false);
-    polar.onclick = async () => {
-      if (this.polarConnected) return;
-      polar.textContent = 'Pairing…'; polar.disabled = true;
-      this.polarConnected = await this.cb.connectPolar();
-      polar.disabled = false;
-      this.renderSensors();
-    };
-
-    this.panel.append(muse, polar);
+    this.deviceRow('Polar H10 (heart)', this.polarConnected, this.pairingPolar,
+      async (b) => {
+        this.pairingPolar = true;
+        b.textContent = 'Pairing…'; b.disabled = true;
+        this.polarConnected = await this.cb.connectPolar();
+        this.pairingPolar = false;
+        if (!this.polarConnected) this.notice = 'No Polar H10 found — make sure the strap is wet and snug.';
+        this.renderSensors();
+      },
+      () => { this.cb.disconnectPolar(); this.polarConnected = false; this.notice = ''; this.renderSensors(); });
 
     // Continue appears once any sensor is paired → signal check (Muse) or
     // straight to the baseline (Polar-only). Add sensors in any order first.
@@ -130,6 +164,27 @@ export class SetupScreen {
     const manual = this.btn('Enter in Manual Mode');
     manual.onclick = () => { this.hide(); this.cb.manual(); };
     this.panel.appendChild(manual);
+  }
+
+  /** One sensor's row: a connect/reconnect button, plus a Disconnect button when
+   *  paired. `connect` gets the button so it can show "Pairing…"; `disconnect`
+   *  drops the device and re-renders so it can be paired again. */
+  private deviceRow(
+    name: string,
+    connected: boolean,
+    pairing: boolean,
+    connect: (b: HTMLButtonElement) => void,
+    disconnect: () => void,
+  ): void {
+    const b = this.btn(connected ? `${name}  ✓ connected` : `Connect ${name}`, !connected);
+    b.disabled = pairing;
+    b.onclick = () => { if (!connected && !pairing) connect(b); };
+    this.panel.appendChild(b);
+    if (connected) {
+      const d = this.linkBtn('Disconnect');
+      d.onclick = disconnect;
+      this.panel.appendChild(d);
+    }
   }
 
   private gotoQuality(): void {
@@ -165,10 +220,27 @@ export class SetupScreen {
     status.style.cssText = 'margin:0.6rem auto 0.2rem;font:0.82rem/1.8 ui-monospace,Consolas,monospace;opacity:0.85;text-align:left;display:inline-block;min-width:240px;';
     status.innerHTML =
       '<div data-row="eeg">EEG signal: —</div>' +
+      '<div data-row="optics">Optical stream: —</div>' +
       '<div data-row="ppg">Pulse (PPG): —</div>' +
       '<div data-row="fnirs">fNIRS (HbO/HbR): —</div>' +
       '<div data-row="polar">Polar H10: —</div>';
     this.panel.appendChild(status);
+
+    // Optics troubleshooting: if no optical packets arrive under this preset, the
+    // user can cycle to another optics-capable preset and reconnect right here.
+    // (Hidden until we actually see zero optics on a connected Muse.)
+    const presetBtn = this.btn('');
+    presetBtn.dataset.role = 'preset';
+    presetBtn.style.display = 'none';
+    presetBtn.style.fontSize = '0.85rem';
+    presetBtn.onclick = async () => {
+      const next = this.cb.cyclePreset();
+      presetBtn.textContent = `Reconnecting on ${next}…`;
+      presetBtn.disabled = true;
+      await this.cb.connectMuse();
+      presetBtn.disabled = false;
+    };
+    this.panel.appendChild(presetBtn);
 
     const cont = this.btn('Begin Calibration', true);
     cont.onclick = () => this.gotoCalibrate();
@@ -184,7 +256,7 @@ export class SetupScreen {
     this.calibElapsed = 0;
     this.cb.startCalibration();
     this.panel.innerHTML = '';
-    this.panel.appendChild(this.heading('Finding your baseline', 'Sit comfortably. Breathe slowly — in for four, out for six. This 30-second baseline lets the Field meet you where you are.'));
+    this.panel.appendChild(this.heading('Finding your baseline', 'Sit comfortably and breathe <b>normally — easy and relaxed</b>, however you are right now. Don’t pace it. This 54-second baseline simply learns your resting rhythm, so the Field can meet you where you are.'));
     const ring = document.createElement('div');
     ring.id = 'setup-calib';
     ring.style.cssText = 'font:300 2.4rem "Segoe UI",sans-serif;margin:1rem 0;';
@@ -196,6 +268,8 @@ export class SetupScreen {
   }
 
   private gotoReady(): void {
+    // Capture the baseline now — at the end of the relaxed-breathing window.
+    this.cb.finishCalibration();
     this.step = 'ready';
     this.panel.innerHTML = '';
     this.panel.appendChild(this.heading("You're ready", 'The node awaits. Press C any time for the map, V for your session metrics.'));
@@ -204,8 +278,33 @@ export class SetupScreen {
     this.panel.appendChild(enter);
   }
 
+  /** Reconcile our local flags with the live client state so an unexpected drop
+   *  (e.g. the Muse powered off) is reflected immediately — flag flips, a notice
+   *  shows, and the device becomes re-connectable. Skips while a connect attempt
+   *  is in flight so it can't stomp the "Pairing…" state. */
+  private reconcile(s: SetupStatus): void {
+    if (!this.pairingMuse && s.museConnected !== this.museConnected) {
+      const dropped = !s.museConnected;
+      this.museConnected = s.museConnected;
+      if (dropped) {
+        this.notice = 'Muse disconnected — power it back on, then press Connect Muse.';
+        // The signal check is meaningless without the Muse → return to sensors.
+        if (this.step === 'sensors' || this.step === 'quality') this.renderSensors();
+      } else if (this.step === 'sensors') {
+        this.renderSensors();
+      }
+    }
+    if (!this.pairingPolar && s.polarConnected !== this.polarConnected) {
+      const dropped = !s.polarConnected;
+      this.polarConnected = s.polarConnected;
+      if (dropped) this.notice = 'Polar H10 disconnected — re-check the strap, then reconnect.';
+      if (this.step === 'sensors') this.renderSensors();
+    }
+  }
+
   /** Called each frame while visible: live signal bars + streaming status + countdown. */
   update(dt: number, s: SetupStatus): void {
+    this.reconcile(s);
     if (this.step === 'quality') {
       const bars = this.panel.querySelectorAll<HTMLElement>('[data-ch]');
       let qSum = 0;
@@ -229,12 +328,43 @@ export class SetupScreen {
       const eegAvg = qSum / 4;
       set('eeg', `EEG signal: ${eegAvg > 0.6 ? 'strong' : eegAvg > 0.3 ? 'weak — reseat band' : 'poor — dampen/reseat'}`,
         eegAvg > 0.6 ? ok : eegAvg > 0.3 ? warn : bad);
-      set('ppg', `Pulse (PPG): ${s.ppgStreaming ? `streaming ✓ ${s.hr ? Math.round(s.hr) + ' bpm' : ''}` : 'warming up…'}`,
-        s.ppgStreaming ? ok : warn);
-      set('fnirs', `fNIRS (HbO/HbR): ${s.fnirsStreaming ? `streaming ✓ (HbO ${s.hbo?.toFixed(1)})` : 'no signal — press band to forehead'}`,
-        s.fnirsStreaming ? ok : bad);
+
+      // The optical stream is the root of both PPG and fNIRS. Diagnose it
+      // explicitly: 0 packets ⇒ optics aren't arriving at all (LED/preset/
+      // firmware) — wetting or reseating the EEG band cannot help, since fNIRS
+      // is infrared, not electrical. Packets arriving ⇒ it's just warm-up/contact.
+      const opticsOn = s.opticsPackets > 0;
+      if (!s.museConnected) {
+        set('optics', 'Optical stream: Muse not connected', warn);
+      } else if (opticsOn) {
+        set('optics', `Optical stream: on ✓ ${s.opticsMode ?? ''} (${s.opticsPackets} pkts)`, ok);
+      } else {
+        set('optics', `Optical stream: none on ${s.preset} — try another preset ↓`, bad);
+      }
+
+      set('ppg', `Pulse (PPG): ${
+        s.ppgStreaming ? `streaming ✓ ${s.hr ? Math.round(s.hr) + ' bpm' : ''}`
+        : opticsOn ? 'warming up (~4 s)…'
+        : 'waiting for optics'}`,
+        s.ppgStreaming ? ok : opticsOn ? warn : bad);
+      set('fnirs', `fNIRS (HbO/HbR): ${
+        s.fnirsStreaming ? `streaming ✓ (HbO ${s.hbo?.toFixed(1)})`
+        : opticsOn ? 'warming up (~10–30 s)…'
+        : 'no optics — not a contact issue'}`,
+        s.fnirsStreaming ? ok : opticsOn ? warn : bad);
       set('polar', s.polarConnected ? `Polar H10: connected ✓ ${s.hr ? Math.round(s.hr) + ' bpm' : ''}` : 'Polar H10: not connected',
         s.polarConnected ? ok : warn);
+
+      // Show the preset-toggle only when a Muse is connected but no optics arrive.
+      const presetBtn = this.panel.querySelector<HTMLButtonElement>('[data-role="preset"]');
+      if (presetBtn && !presetBtn.disabled) {
+        if (s.museConnected && !opticsOn) {
+          presetBtn.style.display = 'block';
+          presetBtn.textContent = `Optics not flowing — switch preset (now ${s.preset})`;
+        } else {
+          presetBtn.style.display = 'none';
+        }
+      }
     } else if (this.step === 'calibrate') {
       this.calibElapsed += dt;
       const ring = this.panel.querySelector('#setup-calib');

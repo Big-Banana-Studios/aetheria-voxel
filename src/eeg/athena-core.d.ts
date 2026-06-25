@@ -36,6 +36,7 @@ export interface AthenaOptions {
   processInterval?: number;
   onEEG?: (d: AthenaEEGData) => void;
   onAccGyro?: (d: AthenaAccGyroData) => void;
+  onOptics?: (d: { samples: number[][]; labels: string[]; numCh: number; count: number }) => void;
   onPPG?: (d: unknown) => void;
   onFNIRS?: (d: unknown) => void;
   onBandPowers?: (bp: Record<string, number>) => void;
@@ -56,6 +57,9 @@ export declare class AthenaDevice {
   get ppg(): AthenaPPG | null;
   get fnirs(): AthenaFNIRS | null;
   get bandPowers(): Record<string, number> | null;
+  get opticsMode(): string | null;
+  get counts(): { total: number; eeg: number; optics: number; accgyro: number; battery: number };
+  get preset(): string;
   static get isSupported(): boolean;
 }
 

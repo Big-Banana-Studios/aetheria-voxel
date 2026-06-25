@@ -29,6 +29,23 @@ const WINDOW = 256; // 1s
 const UPDATE_HZ = 4;
 const ARTIFACT_UV = 1000;
 
+// Presets that stream optics (PPG + fNIRS both ride the optics stream). p1041 is
+// the default (EEG8 + Optics16, LED bright). If a given firmware won't emit
+// optics under p1041, the setup screen lets you cycle these and reconnect.
+// (p1046 is deliberately excluded — LED off, so no PPG/fNIRS possible.)
+const OPTICS_PRESETS = ['p1041', 'p1042', 'p1044', 'p1035', 'p1043'];
+const PRESET_KEY = 'aetheria-muse-preset';
+
+/** What the setup screen needs to diagnose the optical stream honestly. */
+export interface MuseDiagnostics {
+  preset: string;
+  opticsMode: string | null; // e.g. 'OPTICS16' once an optics packet is decoded
+  opticsPackets: number; // 0 ⇒ no optics arriving at all (LED/preset/firmware)
+  ppgStreaming: boolean;
+  fnirsStreaming: boolean;
+  lastLog: string;
+}
+
 type Listener = (payload?: unknown) => void;
 
 export class MuseClient implements CoherenceSource {
@@ -52,10 +69,15 @@ export class MuseClient implements CoherenceSource {
   private timer: number | null = null;
   private listeners = new Map<EEGEvent, Listener[]>();
 
+  // Optical-stream diagnostics (the fNIRS/PPG troubleshooting surface).
+  private opticsPackets = 0;
+  private lastLog = '';
+
   // Calibration (Section 12.2 — avoid recalibrating each session).
   private calibrating = false;
   private calibProgress = 0;
   private calibUntil = 0;
+  private calibDurationMs = 54000;
 
   constructor(private freqTable: FrequencyTable) {}
 
@@ -70,20 +92,49 @@ export class MuseClient implements CoherenceSource {
 
   // ── Connection ──
 
+  /** Selected optics preset (persisted; defaults to p1041). */
+  get preset(): string {
+    try {
+      const p = localStorage.getItem(PRESET_KEY);
+      if (p && OPTICS_PRESETS.includes(p)) return p;
+    } catch {
+      /* localStorage may be unavailable */
+    }
+    return OPTICS_PRESETS[0];
+  }
+
+  /** Cycle to the next optics-capable preset (for the setup screen's toggle).
+   *  Returns the newly-selected preset; reconnect to apply it. */
+  cyclePreset(): string {
+    const i = OPTICS_PRESETS.indexOf(this.preset);
+    const next = OPTICS_PRESETS[(i + 1) % OPTICS_PRESETS.length];
+    try {
+      localStorage.setItem(PRESET_KEY, next);
+    } catch {
+      /* ignore */
+    }
+    return next;
+  }
+
   async connect(): Promise<boolean> {
     if (!MuseClient.isSupported || !window.AthenaDevice) {
       console.warn('[Aetheria] Web Bluetooth unavailable — use Manual Mode.');
       return false;
     }
+    // Tear down any prior device first so reconnecting with a new preset is clean.
+    if (this.device) this.disconnect();
+    this.opticsPackets = 0;
+    this.lastLog = '';
     try {
       this.device = new window.AthenaDevice({
-        preset: 'p1041',
+        preset: this.preset,
         dcOffset: true, // subtract DC at decode so band powers aren't delta-swamped
         processInterval: 1000,
         onEEG: (d) => this.onEEG(d),
         onAccGyro: (d) => this.onAccGyro(d),
+        onOptics: (d) => { this.opticsPackets = d.count; },
         onStatus: (s) => this.onStatus(s),
-        onLog: () => {},
+        onLog: (type, msg) => { if (type !== 'rx' && type !== 'tx') this.lastLog = msg; },
       });
       await this.device.connect();
       await this.device.startStream();
@@ -96,6 +147,18 @@ export class MuseClient implements CoherenceSource {
       this.connected = false;
       return false;
     }
+  }
+
+  /** Optical-stream diagnostics for the setup screen (is fNIRS/PPG flowing?). */
+  getDiagnostics(): MuseDiagnostics {
+    return {
+      preset: this.device?.preset ?? this.preset,
+      opticsMode: this.device?.opticsMode ?? null,
+      opticsPackets: this.device?.counts.optics ?? this.opticsPackets,
+      ppgStreaming: this.device?.ppg != null,
+      fnirsStreaming: this.device?.fnirs != null,
+      lastLog: this.lastLog,
+    };
   }
 
   disconnect(): void {
@@ -124,10 +187,11 @@ export class MuseClient implements CoherenceSource {
 
   // ── Calibration ──
 
-  startCalibration(seconds = 30): void {
+  startCalibration(seconds = 54): void {
     this.calibrating = true;
     this.calibProgress = 0;
-    this.calibUntil = performance.now() + seconds * 1000;
+    this.calibDurationMs = seconds * 1000;
+    this.calibUntil = performance.now() + this.calibDurationMs;
   }
   get isCalibrating(): boolean {
     return this.calibrating;
@@ -287,7 +351,7 @@ export class MuseClient implements CoherenceSource {
     // Calibration progress.
     if (this.calibrating) {
       const remain = this.calibUntil - performance.now();
-      this.calibProgress = Math.min(1, 1 - remain / 30000);
+      this.calibProgress = Math.min(1, 1 - remain / this.calibDurationMs);
       if (remain <= 0) {
         this.calibrating = false;
         this.calibProgress = 1;

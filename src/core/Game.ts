@@ -145,6 +145,13 @@ export class Game {
       onResume: () => this.resume(),
       onMainMenu: () => this.showMainMenu(),
       onMetrics: () => this.metricsPanel.show(this.metrics),
+    }, {
+      museConnected: () => this.muse.isConnected,
+      polarConnected: () => this.polar.isConnected,
+      connectMuse: async () => { this.usingMuse = await this.muse.connect(); return this.usingMuse; },
+      connectPolar: () => this.polar.connect(),
+      disconnectMuse: () => { this.muse.disconnect(); this.usingMuse = false; },
+      disconnectPolar: () => this.polar.disconnect(),
     });
     this.metricsPanel = new MetricsPanel(this.opts.hud);
     this.metricsPanel.onExport = () => this.downloadSignalLog();
@@ -342,6 +349,7 @@ export class Game {
   private applySettings(s: import('./Settings').SettingsData): void {
     this.audio.setMasterVolume(s.masterVolume);
     this.hud.setSubtitlesEnabled(s.subtitles);
+    this.hud.setReduceMotion(s.reduceMotion);
     this.player?.setReduceMotion(s.reduceMotion);
     // Reduce flashes → gentler bloom (photosensitivity, Section 14.3).
     if (this.bloom) this.bloom.strength = s.reduceFlashes ? 0.22 : 0.5;
@@ -370,7 +378,7 @@ export class Game {
     const ok = await this.muse.connect();
     if (ok) {
       this.usingMuse = true;
-      this.muse.startCalibration(30);
+      this.muse.startCalibration(54);
     } else {
       // Graceful fall-through to Manual Mode (Section 12.3).
       this.hud.speak('No Muse found — entering Manual Mode. You can connect later from Settings.');
@@ -416,7 +424,11 @@ export class Game {
     this.setup.open({
       connectMuse: async () => { this.usingMuse = await this.muse.connect(); return this.usingMuse; },
       connectPolar: () => this.polar.connect(),
-      startCalibration: () => { this.muse.startCalibration(30); this.polar.captureBaseline(); },
+      disconnectMuse: () => { this.muse.disconnect(); this.usingMuse = false; },
+      disconnectPolar: () => this.polar.disconnect(),
+      cyclePreset: () => this.muse.cyclePreset(),
+      startCalibration: () => { this.muse.startCalibration(54); this.polar.beginBaseline(); },
+      finishCalibration: () => this.polar.finalizeBaseline(),
       enter: () => this.beginPlay(),
       manual: () => this.startManual(),
     });
@@ -482,12 +494,17 @@ export class Game {
     // Live setup-screen feedback (signal bars + streaming status + countdown).
     if (this.state === 'setup' && this.setup.isVisible) {
       const sm = this.muse.getMetrics();
+      const dg = this.muse.getDiagnostics();
       this.setup.update(dt, {
         quality: this.muse.getChannelQuality(),
         hr: this.polar.heartRate || sm.heartRate,
-        ppgStreaming: sm.heartRate != null,
-        fnirsStreaming: sm.hbo != null,
+        ppgStreaming: dg.ppgStreaming || sm.heartRate != null,
+        fnirsStreaming: dg.fnirsStreaming || sm.hbo != null,
         hbo: sm.hbo,
+        museConnected: this.muse.isConnected,
+        opticsPackets: dg.opticsPackets,
+        opticsMode: dg.opticsMode,
+        preset: dg.preset,
         polarConnected: this.polar.isConnected,
         calibProgress: this.muse.calibrationProgress,
       });
@@ -607,6 +624,7 @@ export class Game {
       levelIndex: this.level?.levelIndex ?? 0,
       completed: this.completedLevels,
       unlocked: this.unlockedLevels,
+      breatheGuide: lvl?.breathingGuideActive ?? false,
     });
 
     // Live tuning HUD (backtick) — the actual gate components for device tuning.

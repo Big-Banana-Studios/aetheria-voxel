@@ -15,6 +15,17 @@ export interface MenuCallbacks {
   onMetrics: () => void; // open the session metrics panel
 }
 
+/** Live sensor state + actions for the in-Field (pause) sensor controls, so a
+ *  device that drops mid-session can be reconnected without leaving the Field. */
+export interface SensorControls {
+  museConnected: () => boolean;
+  polarConnected: () => boolean;
+  connectMuse: () => Promise<boolean>;
+  connectPolar: () => Promise<boolean>;
+  disconnectMuse: () => void;
+  disconnectPolar: () => void;
+}
+
 export class MenuSystem {
   private overlay: HTMLDivElement;
   private panel: HTMLDivElement;
@@ -24,6 +35,7 @@ export class MenuSystem {
     private settings: Settings,
     private save: SaveSystem,
     private cb: MenuCallbacks,
+    private sensors: SensorControls,
   ) {
     this.overlay = document.createElement('div');
     this.overlay.style.cssText = [
@@ -68,17 +80,23 @@ export class MenuSystem {
     const completed = this.save.data.levelsCompleted;
     const enter = this.btn(completed > 0 ? 'Continue the Journey' : 'Enter the Field', true);
     enter.onclick = () => this.cb.onEnter();
+    const how = this.btn('How to Play');
+    how.onclick = () => this.showHowToPlay(() => this.showMain());
     const settings = this.btn('Settings');
     settings.onclick = () => this.showSettings(() => this.showMain());
     const credits = this.btn('Credits');
     credits.onclick = () => this.showCredits(() => this.showMain());
-    this.panel.append(enter, settings, credits);
+    this.panel.append(enter, how, settings, credits);
     if (completed > 0) {
       const note = document.createElement('div');
       note.style.cssText = 'margin-top:14px;opacity:0.5;font-size:0.85rem';
       note.textContent = `${completed}/27 nodes restored · press C in the Field for the map`;
       this.panel.appendChild(note);
     }
+    const version = document.createElement('div');
+    version.style.cssText = 'margin-top:22px;opacity:0.4;font:0.78rem ui-monospace,Consolas,monospace;letter-spacing:0.1em;';
+    version.textContent = `v${__APP_VERSION__}`;
+    this.panel.appendChild(version);
     this.show();
   }
 
@@ -92,12 +110,66 @@ export class MenuSystem {
     resume.onclick = () => this.cb.onResume();
     const metrics = this.btn('Session Metrics');
     metrics.onclick = () => this.cb.onMetrics();
+    const how = this.btn('How to Play');
+    how.onclick = () => this.showHowToPlay(() => this.showPause());
     const settings = this.btn('Settings');
     settings.onclick = () => this.showSettings(() => this.showPause());
     const main = this.btn('Return to Title');
     main.onclick = () => this.cb.onMainMenu();
-    this.panel.append(resume, metrics, settings, main);
+    this.panel.append(resume, metrics, how, settings, main);
+    this.panel.appendChild(this.sensorsBlock());
     this.show();
+  }
+
+  /** Live sensor rows in the pause menu: reconnect a device that dropped, or
+   *  disconnect one, without leaving the Field. Re-renders the pause menu after
+   *  any action so the state stays truthful. */
+  private sensorsBlock(): HTMLDivElement {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:18px;padding-top:14px;border-top:1px solid rgba(180,142,232,0.18);';
+    const lbl = document.createElement('div');
+    lbl.textContent = 'Sensors';
+    lbl.style.cssText = 'opacity:0.5;font-size:0.78rem;letter-spacing:0.14em;text-transform:uppercase;margin-bottom:8px;';
+    wrap.appendChild(lbl);
+    wrap.appendChild(this.sensorRow('Muse', this.sensors.museConnected(),
+      () => this.sensors.connectMuse(), () => this.sensors.disconnectMuse()));
+    wrap.appendChild(this.sensorRow('Polar H10', this.sensors.polarConnected(),
+      () => this.sensors.connectPolar(), () => this.sensors.disconnectPolar()));
+    return wrap;
+  }
+
+  private sensorRow(
+    name: string,
+    connected: boolean,
+    connect: () => Promise<boolean>,
+    disconnect: () => void,
+  ): HTMLDivElement {
+    const r = document.createElement('div');
+    r.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin:7px 0;text-align:left;';
+    const status = document.createElement('span');
+    status.textContent = `${name}: ${connected ? 'connected ✓' : 'not connected'}`;
+    status.style.cssText = `font-size:0.92rem;${connected ? 'color:#9ad6c8;' : 'opacity:0.7;'}`;
+
+    const action = document.createElement('button');
+    action.textContent = connected ? 'Disconnect' : 'Connect';
+    action.style.cssText = [
+      'padding:6px 16px', 'border-radius:18px', 'border:1px solid rgba(180,142,232,0.4)',
+      'background:rgba(20,12,34,0.6)', 'color:#e8e0f0',
+      'font:300 0.85rem "Segoe UI",sans-serif', 'cursor:pointer', 'flex:0 0 auto',
+    ].join(';');
+    action.onclick = async () => {
+      if (connected) {
+        disconnect();
+        this.showPause(); // re-render with the new state
+      } else {
+        action.textContent = 'Pairing…';
+        action.disabled = true;
+        await connect();
+        this.showPause();
+      }
+    };
+    r.append(status, action);
+    return r;
   }
 
   private row(label: string, control: HTMLElement): HTMLDivElement {
@@ -185,6 +257,104 @@ export class MenuSystem {
       location.reload();
     };
     input.click();
+  }
+
+  /** How to Play — complete, gentle play directions, objectives, and what each
+   *  sensor adds to the depth of the experience. Reachable from the pause menu
+   *  and the title. Scrolls; honest language (the body settles — never a score). */
+  showHowToPlay(back: () => void): void {
+    this.panel.innerHTML = '';
+    const head = document.createElement('div');
+    head.style.cssText = 'font-weight:300;letter-spacing:0.16em;font-size:1.5rem;margin-bottom:0.2rem';
+    head.textContent = 'How to Play';
+    const tag = document.createElement('div');
+    tag.style.cssText = 'opacity:0.6;font-size:0.9rem;margin-bottom:1rem;line-height:1.5';
+    tag.textContent = 'A contemplative journey — there is no way to lose, and no clock. You restore each node by settling, at your own pace.';
+    this.panel.append(head, tag);
+
+    const scroll = document.createElement('div');
+    scroll.style.cssText =
+      'max-height:54vh;overflow-y:auto;text-align:left;padding-right:10px;' +
+      'font:300 0.95rem/1.65 "Segoe UI",system-ui,sans-serif;color:#e2d9f0;';
+
+    const sec = (title: string, body: string) =>
+      `<div style="margin:0 0 1.1rem">` +
+      `<div style="color:#c4a8ec;letter-spacing:0.08em;font-size:0.82rem;text-transform:uppercase;margin-bottom:0.35rem">${title}</div>` +
+      `<div style="opacity:0.9">${body}</div></div>`;
+
+    const key = (k: string) =>
+      `<span style="display:inline-block;min-width:2.1em;text-align:center;padding:1px 7px;margin:0 2px;` +
+      `border:1px solid rgba(180,142,232,0.4);border-radius:6px;background:rgba(20,12,34,0.6);` +
+      `font:0.82rem ui-monospace,Consolas,monospace;color:#e8e0f0">${k}</span>`;
+
+    scroll.innerHTML =
+      sec('Your goal',
+        'Each of the 27 nodes is a place that has gone quiet. You restore it by <b>settling</b> — letting your body grow calm and steady. ' +
+        'As you settle, the Field around you brightens, bridges form, and locks open. When a node is restored, the next opens on the map. ' +
+        'Nothing punishes you: there are no enemies, no timers, no falling damage, no failure. If you simply spend time in a node, it will always open eventually.') +
+
+      sec('Moving around',
+        `${key('W')}${key('A')}${key('S')}${key('D')} or the arrow keys to walk &nbsp;·&nbsp; <b>Mouse</b> to look &nbsp;·&nbsp; ${key('Space')} to jump / rise &nbsp;·&nbsp; ${key('Shift')} to step down. ` +
+        'Click the window first to capture the mouse; press ' + key('Esc') + ' to release it and open this menu.') +
+
+      sec('What to do in a node',
+        `<b>Settle.</b> Find the calm spot — often a glowing meditation dais — and press ${key('M')} to sit. ` +
+        'The longer you stay settled, the more the node restores. You can also just stand still and breathe anywhere.<br><br>' +
+        `<b>Resonance locks</b> (glowing crystal clusters): walk up close and <b>hold ${key('F')}</b> for about 2½ seconds to charge one open. ` +
+        'You will see it brighten and swell as it fills — keep holding until it locks. Holding never "resets," so a pause is fine.<br><br>' +
+        `<b>The breathing ring.</b> After a few seconds at a lock (or while settling at the gate) a soft ring fades in to <b>pace your breath</b> — ` +
+        'follow it in and out. This slow breathing is what raises your heart-rhythm above your resting baseline, settling you so locks charge and the gate opens. ' +
+        'It is only a guide — never required (see “The breathing patterns” below).<br><br>' +
+        '<b>Harmonic bridges</b>: these solidify as you settle. The calmer you are, the more solid the path — then walk across. If you slip off, you are gently returned, never hurt.') +
+
+      sec('The breathing patterns',
+        'Each regime has its own pace, shown on the breathing ring with its name. Breathe along — in as the ring grows, out as it shrinks:' +
+        '<div style="margin-top:0.5rem;line-height:1.9">' +
+        '<span style="color:#e0a06a">●</span> <b>GUT — Grounding breath:</b> in for 4, out for 6. A long, slow exhale to settle and ground.<br>' +
+        '<span style="color:#e87aa0">●</span> <b>HEART — Resonance breath:</b> in for 5½, out for 5½. The balanced ~5–6 breaths-a-minute pace that most steadies the heart.<br>' +
+        '<span style="color:#b48ee8">●</span> <b>HEAD — Even breath:</b> in 4 · hold 4 · out 4 · hold 4. An even “box” breath for calm clarity.' +
+        '</div><br>' +
+        'The colour and pace match the node you are in. None of it is timed or scored — if a pace doesn’t suit you, breathe however feels easy; the ring is just an offer.') +
+
+      sec('Finding your way',
+        `${key('M')} enter / leave meditation &nbsp;·&nbsp; <b>hold ${key('F')}</b> charge a resonance lock &nbsp;·&nbsp; ` +
+        `${key('C')} open the Lo Shu cube map (see all 27 nodes and your progress) &nbsp;·&nbsp; ` +
+        `${key('V')} your session metrics &nbsp;·&nbsp; ${key('Esc')} pause.`) +
+
+      sec('The frequencies',
+        'Each node is tuned to one of the 27 Aetheria frequencies. They are <i>felt more than heard</i> — a low, grounding tone. ' +
+        'Best on headphones or a subwoofer, but they work on any speaker. With a Muse, your own brain rhythms choose which frequency the Field tunes to. ' +
+        `Without a headset you choose it yourself with the number keys ${key('1')}–${key('9')}.`) +
+
+      sec('Playing without sensors — Manual Mode',
+        'A complete path, never a lesser one. The game reads your <b>settling from how you play</b>: holding still, slow movement, and entering meditation all deepen it. ' +
+        `Pick frequencies with ${key('1')}–${key('9')}, hold ${key('F')} on locks, and breathe. Everything in the game is reachable this way.`) +
+
+      sec('Adding the Muse S Athena (EEG headband)',
+        '<b>Your brain chooses the frequency.</b> The Field listens to your brain rhythms and automatically tunes each node to meet the state you are in — you no longer pick numbers by hand. ' +
+        'Its motion sensor also reads how physically still you are, which helps gate settling. Its optical sensors add heart rate and blood-oxygen depth to your <i>session metrics</i>. ' +
+        'It makes the Field feel responsive to you, not just your keys.') +
+
+      sec('Adding the Polar H10 (heart strap)',
+        '<b>The deepest settle signal.</b> It measures your heart-rhythm variability and compares it to your own baseline from the opening breath. ' +
+        'Slow, easy breathing raises it — and that is what most directly tells the Field you have settled, opening gates and bridges. ' +
+        'When the Polar is connected it leads; the others support it. It is the most direct, validated read of the body settling.') +
+
+      sec('Using both together',
+        'The richest experience: the <b>Muse chooses</b> the frequency for where your mind is, while the <b>Polar gates</b> the settling from your heart. ' +
+        'Every signal is recorded for your session metrics (' + key('V') + ') as honest, raw data — never a grade. ' +
+        'If a sensor drops out mid-journey, reconnect it any time from <b>Pause → Sensors</b>; the Field falls back gracefully until it returns.') +
+
+      sec('A gentle promise',
+        'This was made as a calm place — for veterans and anyone who needs one. Go slowly. Rest when you like. ' +
+        'You cannot do it wrong, and every node will open in time.');
+
+    this.panel.appendChild(scroll);
+    const backBtn = this.btn('Back', true);
+    backBtn.style.marginTop = '1rem';
+    backBtn.onclick = back;
+    this.panel.appendChild(backBtn);
+    this.show();
   }
 
   showCredits(back: () => void): void {

@@ -10,9 +10,15 @@ For tuning with the **Muse S Athena** + **Polar H10** before deploying.
   signature, not real rhythms. Fixes applied: `dcOffset:true` + per-window
   detrend in the band analyzer. Verify in the new setup signal check that, with
   the band well-seated, alpha/theta rise when you close your eyes.
-- **fNIRS never streamed** (HbO/HbR null) — almost certainly forehead contact.
-  The setup screen now shows fNIRS streaming status so you can confirm before
-  entering (press the band gently to the forehead; it can take ~10–30 s).
+- **fNIRS never streamed** (HbO/HbR null) — and it stayed dead through a wetted
+  reseat. Re-diagnosed: PPG *and* fNIRS both ride the **optics** stream, and the
+  accelerometer (a different stream on the same BLE characteristic) *was* flowing
+  — so the BLE path is fine and this isn't electrode contact (fNIRS is optical/
+  infrared, not electrical). The likely cause is the preset not producing an
+  optical stream on this firmware. **Fix shipped:** the setup screen now shows an
+  **"Optical stream"** row (live optics-packet count + mode) and, when zero, a
+  **preset-toggle button** that reconnects across optics-capable presets
+  (`p1041 → p1042 → p1044 → p1035 → p1043`). See "If optical metrics stay blank".
 - **Resonance was unreliable** because locks required the EEG-prescribed frequency
   to match their tuning, which the flaky EEG couldn't hold. **Now: locks open by
   Focus** — walk up to a lock and hold **F** (~2.5 s). Frequency-match (manual
@@ -46,8 +52,13 @@ Also: **V** = session metrics (sparklines + JSON export); console
 ### Connection & signal
 - [ ] Muse pairs from the setup screen; the 4 electrode bars go green when seated still.
 - [ ] Polar pairs; HUD shows a plausible **HR (50–90 bpm)** within ~10 s.
-- [ ] Calibration counts 30 s; afterward `rmssd baseline` and a stillness baseline are set
-      (visible in the tuning HUD as `base` values).
+- [ ] Calibration counts **54 s**; breathe **normally/relaxed** (don't pace it — the baseline
+      must capture resting breath so settledness can rise *above* it). The Polar baseline is
+      captured at the *end* of the window; afterward `rmssd baseline` and a stillness baseline
+      are set (visible in the tuning HUD as `base` values).
+- [ ] In a level, after ~5 s at an unsolved resonance lock (or settling at the gate) the
+      **breathing ring** fades in and paces the breath. Pattern is per-regime: GUT in4/out6,
+      HEART 5.5/5.5, HEAD box 4/4/4/4. Reduce-motion shrinks the scaling but keeps the cue.
 - [ ] Optical metrics **warm up over ~10–30 s** (PPG needs ~4 s, fNIRS ~10 s of optics).
       HbO/HbR and HR should populate; if they stay `—`, see "preset" below.
 
@@ -66,6 +77,9 @@ Also: **V** = session metrics (sparklines + JSON export); console
 ### Fallback chain & fusion
 - [ ] Unplug Polar mid-session → gate falls back to Muse stillness, then behaviour. No crash.
 - [ ] Both connected → HRV leads (tuning HUD shows `via hrv`).
+- [ ] A dropped sensor (power off the Muse or Polar) → reconnect from the **pause
+      menu** (Esc → Sensors → Connect) without leaving the Field. On the setup
+      screen, a drop reverts the device to a Connect button + shows a notice.
 
 ### Audio (felt, not heard)
 - [ ] On headphones/sub you feel the **sub-bass** (5–12 Hz) grounding tone; HUD shows
@@ -85,6 +99,9 @@ Also: **V** = session metrics (sparklines + JSON export); console
 |---|---|---|---|
 | HRV settle sensitivity | `src/eeg/PolarClient.ts` `SETTLE_RATIO` | 1.5 | RMSSD this far above baseline = fully settled. **Settle maxes too easily → raise (1.8–2.0); never reaches 1.0 → lower (1.3).** |
 | HRV window | `src/eeg/PolarClient.ts` `WINDOW_SEC` | 45 | Longer = smoother/slower; shorter = jumpier/faster. |
+| Baseline window | `src/ui/SetupScreen.ts` `CALIB_SECONDS` · `MuseClient.startCalibration` | 54 s | Resting-breath baseline length. Captured at the end (`PolarClient.finalizeBaseline`). |
+| Breathing pacer pace | `src/ui/BreathingGuide.ts` `PATTERNS` | GUT 4/6 · HEART 5.5/5.5 · HEAD 4-4-4-4 | Per-regime in/hold/out seconds; tune the recommended breath. |
+| Breathing pacer delay | `src/levels/TemplateLevel.ts` `breathGuideDelay` | 5 s | How long at a lock/gate before the ring appears. |
 | R-R artifact bounds | `src/eeg/PolarClient.ts` `RR_MIN/MAX_MS` | 300–2000 | Widen only if valid beats are being rejected. |
 | Stillness sensitivity | `src/eeg/StillnessIndex.ts` `STILL_RATIO` | 3 | How much stiller than baseline = settled. **Too easy → raise; too hard → lower.** |
 | Manual settle targets | `src/eeg/ManualMode.ts` | 0.92 / 0.6 / 0.42 | meditating / still / moving. Tune the no-headset feel. |
@@ -107,10 +124,30 @@ Also: **V** = session metrics (sparklines + JSON export); console
 - **Stillness** → ~1.0 when you hold still, drops with movement.
 - **fNIRS HbO/HbR** drift slowly (seconds), anti-correlated — that's expected.
 
-## If optical metrics stay blank
-Preset is `p1041` (EEG8 + Optics16 + IMU — all sensors) in `src/eeg/MuseClient.ts`.
-If your firmware prefers another, `p1042` is equivalent; `p1035` is EEG4+Optics4.
-Change the `preset:` in `MuseClient.connect()`.
+## If optical metrics stay blank (PPG / fNIRS)
+
+**First, read the new "Optical stream" row on the signal-check screen.** PPG and
+fNIRS are *not* separate sensors — they're both derived in software from the one
+**optics** stream (raw photodetector values). The firmware has no "fNIRS mode";
+the LED + optical detectors either stream or they don't. So the only question
+that matters is: *are optics packets arriving at all?*
+
+- **"Optical stream: on ✓ OPTICS16 (N pkts)"** → optics ARE flowing. PPG needs
+  ~4 s to lock a heart rate; fNIRS needs ~10–30 s of optics to fit HbO/HbR. Just
+  wait, and keep the band flat against the forehead.
+- **"Optical stream: none on p1041"** → no optics packets are coming in. This is
+  **not** a contact problem and **wetting/reseating the EEG electrodes will not
+  help** — fNIRS is infrared, driven by the LED, not the wet electrical contacts.
+  It means the preset/LED isn't producing an optical stream on your firmware.
+  → Hit the **"switch preset"** button that appears, which reconnects on the next
+  optics-capable preset (`p1041 → p1042 → p1044 → p1035 → p1043`, persisted in
+  `localStorage` under `aetheria-muse-preset`). Watch the Optical-stream row after
+  each: when packet count starts climbing, that preset works on your unit.
+
+Note from session 1: the accelerometer streamed fine while optics stayed at 0
+the whole session — that's the signature of an optics/preset issue (the BLE path
+works), not a forehead-contact issue. The preset toggle is the fix to try first.
+`p1046` is excluded from the cycle (LED off → no PPG/fNIRS possible).
 
 ---
 *Tell me what you observe on the HUD and I'll adjust the constants above. We push after this passes.*

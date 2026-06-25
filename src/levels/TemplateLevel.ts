@@ -34,6 +34,9 @@ export class TemplateLevel extends LevelBase {
   private postPuzzleClock = 0; // time since all locks solved (gate-ceiling timer)
   private readonly gateCeilingSeconds = 75; // gate yields by here regardless
   private focusHintShown = false;
+  private nearCrystalTime = 0; // continuous time near an unsolved lock
+  private settleSpaceTime = 0; // continuous time settling at the gate/meditation
+  private readonly breathGuideDelay = 5; // the pacer appears after this many seconds
 
   constructor(config: LevelFrequencyConfig, ctx: LevelContext) {
     super(config, ctx);
@@ -210,6 +213,12 @@ export class TemplateLevel extends LevelBase {
       this.ctx.speak('A resonance lock. Look at it and hold F to focus it open.');
     }
 
+    // Breathing pacer timing: once you've spent a few seconds at an unsolved lock
+    // (or are settling at the gate before it opens), the breath guide fades in.
+    this.nearCrystalTime = nearUnsolved ? this.nearCrystalTime + dt : 0;
+    const settlingAtGate = this.allPuzzlesSolved && !this.gateOpened && this.playerInMeditationSpace();
+    this.settleSpaceTime = settlingAtGate ? this.settleSpaceTime + dt : 0;
+
     // Feed every reactive prop the current state and animate it.
     for (const prop of this.props) {
       prop.onFrequencyUpdate(freqIndex, coherence);
@@ -253,6 +262,12 @@ export class TemplateLevel extends LevelBase {
     }
     this.props = [];
     this.crystals = [];
+  }
+
+  /** Whether the HUD should show the breathing pacer right now: a few seconds
+   *  into working an unsolved lock, or settling at the gate before it opens. */
+  get breathingGuideActive(): boolean {
+    return this.nearCrystalTime >= this.breathGuideDelay || this.settleSpaceTime >= this.breathGuideDelay;
   }
 
   // Expose for HUD.

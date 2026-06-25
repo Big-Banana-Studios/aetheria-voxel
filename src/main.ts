@@ -36,3 +36,16 @@ boot().catch((err) => {
     loading.style.color = '#e88e8e';
   }
 });
+
+// Offline support: register the service worker so that after one visit the app
+// is fully cached and runs with no network. Production builds only (the SW would
+// interfere with the dev server's HMR). The version query busts the cache on a
+// new release; BASE_URL keeps the scope correct under a subpath (GitHub Pages).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const base = import.meta.env.BASE_URL || './';
+    navigator.serviceWorker
+      .register(`${base}sw.js?v=${__APP_VERSION__}`, { scope: base })
+      .catch((e) => console.warn('[Aetheria] SW registration failed:', e));
+  });
+}
