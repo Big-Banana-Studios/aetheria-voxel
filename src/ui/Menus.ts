@@ -5,7 +5,7 @@
  *
  * Sacred-geometry aesthetic; calm; accessibility-first settings (Section 14).
  */
-import type { Settings, SettingsData, Difficulty } from '../core/Settings';
+import type { Settings, SettingsData, Difficulty, ControlMode } from '../core/Settings';
 import type { SaveSystem } from '../core/SaveSystem';
 import { canInstall, promptInstall } from './install';
 
@@ -245,6 +245,24 @@ export class MenuSystem {
     }
     diffSel.onchange = () => set('difficulty', diffSel.value as Difficulty);
     this.panel.appendChild(this.row('Settling depth', diffSel));
+
+    // Controls: Auto follows the device / last-used input; or force mouse+keyboard
+    // or touch (useful on a touchscreen laptop or a detached 2-in-1).
+    const ctrlSel = document.createElement('select');
+    ctrlSel.style.cssText = diffSel.style.cssText;
+    const ctrlOpts: [ControlMode, string][] = [
+      ['auto', 'Auto'],
+      ['mouse', 'Mouse & keyboard'],
+      ['touch', 'Touch'],
+    ];
+    for (const [val, label] of ctrlOpts) {
+      const o = document.createElement('option');
+      o.value = val; o.textContent = label;
+      if (val === d.controls) o.selected = true;
+      ctrlSel.appendChild(o);
+    }
+    ctrlSel.onchange = () => set('controls', ctrlSel.value as ControlMode);
+    this.panel.appendChild(this.row('Controls', ctrlSel));
 
     // Save data tools.
     const tools = document.createElement('div');

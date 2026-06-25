@@ -35,7 +35,7 @@ import { MenuSystem } from '../ui/Menus';
 import { MetricsTracker } from './MetricsTracker';
 import { MetricsPanel } from '../ui/MetricsPanel';
 import { SetupScreen } from '../ui/SetupScreen';
-import { TouchControls, isTouchDevice } from '../ui/TouchControls';
+import { TouchControls, hasTouch, hasFinePointer } from '../ui/TouchControls';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -97,8 +97,12 @@ export class Game {
   private metrics = new MetricsTracker();
   private metricsPanel!: MetricsPanel;
   private setup!: SetupScreen;
-  private touch?: TouchControls; // on-screen controls (touch devices only)
-  private lastTouchState = '';
+  private touch?: TouchControls; // on-screen controls (created on touch-capable hw)
+  private touchCapable = false; // device has a touchscreen
+  private usingTouch = false; // resolved active input mode (touch vs mouse/keyboard)
+  private lastInputTouch = false; // last input seen was a touch (for 'auto')
+  private lastTouchUiState = ''; // throttle touch-overlay DOM writes
+  private suppressUnlockPause = false; // ignore the next pointer-unlock (mode switch)
   // Shell state machine.
   private state: 'menu' | 'setup' | 'playing' | 'paused' | 'map' | 'complete' | 'metrics' = 'menu';
 
@@ -189,20 +193,31 @@ export class Game {
     this.player.controls.addEventListener('unlock', () => this.onPointerUnlock());
     this.player.controls.addEventListener('lock', () => this.setPlaying(true));
 
-    // On-screen controls for touch devices (Android phones/tablets). Desktop is
-    // unchanged (keyboard + pointer-lock). Web Bluetooth still works in Android
-    // Chrome, so the Muse/Polar sensors are available on the phone too.
-    if (isTouchDevice()) {
+    // On-screen controls exist on any touchscreen device (phone OR touchscreen
+    // laptop/2-in-1). Whether they're ACTIVE is resolved by `usingTouch` from the
+    // Controls setting + smart detection — so a touchscreen PC with a mouse keeps
+    // mouse-look (pointer lock) and only shows touch controls when you actually
+    // touch (in Auto) or force it in Settings.
+    this.touchCapable = hasTouch();
+    if (this.touchCapable) {
       this.touch = new TouchControls(this.opts.hud, {
         move: (x, z) => this.player.setMoveVector(x, z),
         look: (dx, dy) => this.player.applyLook(dx, dy),
         setFocus: (on) => this.player.setFocusing(on),
         setJump: (on) => this.player.setJump(on),
         meditate: () => this.player.meditateToggle(),
-        toggleMap: () => this.toggleCube(),
         pause: () => this.touchPause(),
       });
+      // Smart switching in Auto: follow the last-used input device.
+      window.addEventListener('touchstart', () => this.noteInput(true), { passive: true });
+      window.addEventListener('mousemove', () => this.noteInput(false), { passive: true });
+      window.addEventListener('keydown', () => this.noteInput(false));
+      // In mouse mode, a click in the Field (re)acquires pointer-lock for look.
+      this.renderer.domElement.addEventListener('click', () => {
+        if (!this.usingTouch && this.state === 'playing' && !this.player.isLocked) this.player.lock();
+      });
     }
+    this.applyControls(); // resolve the initial mode now that touchCapable is known
 
     // HUD setup-bar wiring (hidden until the player chooses to enter).
     this.hud.onConnectMuse = () => this.connectMuse();
@@ -340,7 +355,7 @@ export class Game {
     } else if (this.state === 'playing') {
       // Set state before unlocking so the unlock doesn't trigger the pause menu.
       this.state = 'metrics';
-      if (this.touch) this.setPlaying(false); else this.player.unlock();
+      if (this.usingTouch) this.setPlaying(false); else this.player.unlock();
       this.metricsPanel.show(this.metrics);
     } else if (this.state === 'paused' || this.state === 'complete') {
       this.metricsPanel.show(this.metrics); // cursor already free
@@ -353,10 +368,10 @@ export class Game {
     this.hud.toggleCube();
     if (this.hud.cubeIsHero) {
       this.state = 'map';
-      if (this.touch) this.setPlaying(false); else this.player.unlock();
+      if (this.usingTouch) this.setPlaying(false); else this.player.unlock();
     } else {
       this.state = 'playing';
-      if (this.touch) this.setPlaying(true); else this.player.lock();
+      if (this.usingTouch) this.setPlaying(true); else this.player.lock();
     }
   }
 
@@ -388,6 +403,8 @@ export class Game {
     this.hud.setSubtitlesEnabled(s.subtitles);
     this.hud.setReduceMotion(s.reduceMotion);
     this.player?.setReduceMotion(s.reduceMotion);
+    // Re-resolve the control mode when the Controls setting changes.
+    this.applyControls();
     // Reduce flashes → gentler bloom (photosensitivity, Section 14.3).
     if (this.bloom) this.bloom.strength = s.reduceFlashes ? 0.22 : 0.5;
     // Render scale (perf / quality).
@@ -484,6 +501,8 @@ export class Game {
   }
 
   private onPointerUnlock(): void {
+    // Programmatic unlock during a control-mode switch must not pause.
+    if (this.suppressUnlockPause) { this.suppressUnlockPause = false; return; }
     this.setPlaying(false);
     // Esc in the Field opens pause; cube/menu/completion unlocks are intentional.
     if (this.state === 'playing') this.pause();
@@ -493,9 +512,8 @@ export class Game {
 
   requestPlay(): void {
     this.audio.start().catch((e) => console.warn('[Aetheria] Audio start failed', e));
-    if (this.touch) {
-      // Touch devices have no pointer-lock; enter play directly and use the
-      // on-screen controls instead.
+    if (this.usingTouch) {
+      // No pointer-lock on touch; enter play directly and use on-screen controls.
       this.setPlaying(true);
     } else {
       this.player.lock();
@@ -506,6 +524,46 @@ export class Game {
   private touchPause(): void {
     this.setPlaying(false);
     this.pause();
+  }
+
+  // ── Control mode (touch vs mouse/keyboard) ──
+
+  /** Record the last-used input so 'auto' can follow it on hybrid devices. */
+  private noteInput(touch: boolean): void {
+    if (touch === this.lastInputTouch) return;
+    this.lastInputTouch = touch;
+    if (this.settings.data.controls === 'auto') this.applyControls();
+  }
+
+  /** Resolve whether touch input is active right now. */
+  private resolveUsingTouch(): boolean {
+    if (!this.touchCapable) return false;
+    const mode = this.settings.data.controls;
+    if (mode === 'mouse') return false;
+    if (mode === 'touch') return true;
+    // auto: touch-only devices (no mouse/trackpad) always use touch; hybrids
+    // (touchscreen + mouse, e.g. a 2-in-1) follow whichever was used last.
+    if (!hasFinePointer()) return true;
+    return this.lastInputTouch;
+  }
+
+  /** Apply the resolved control mode: toggle pointer-lock vs on-screen controls. */
+  private applyControls(): void {
+    const next = this.resolveUsingTouch();
+    if (next === this.usingTouch) return;
+    this.usingTouch = next;
+    if (this.state !== 'playing') return; // visibility handled in update()
+    if (this.usingTouch) {
+      // Switched to touch mid-play: drop pointer-lock (without triggering pause).
+      if (this.player.isLocked) {
+        this.suppressUnlockPause = true;
+        this.player.unlock();
+      }
+      this.setPlaying(true);
+    } else {
+      // Switched to mouse mid-play: keyboard already works; click to look.
+      this.hud.speak('Mouse & keyboard mode — click to look around.');
+    }
   }
 
   private setPlaying(p: boolean): void {
@@ -540,11 +598,15 @@ export class Game {
   }
 
   private update(dt: number): void {
-    // Keep the on-screen touch controls in sync with the game state (show during
-    // play / map, hide for menus). Only writes DOM when the state changes.
-    if (this.touch && this.state !== this.lastTouchState) {
-      this.lastTouchState = this.state;
-      this.touch.setState(this.state);
+    // Keep the on-screen touch controls in sync: shown only when touch is the
+    // active mode and we're playing. Only writes DOM when the desired state
+    // changes.
+    if (this.touch) {
+      const desired = this.usingTouch ? this.state : '';
+      if (desired !== this.lastTouchUiState) {
+        this.lastTouchUiState = desired;
+        this.touch.setState(desired);
+      }
     }
 
     // Live setup-screen feedback (signal bars + streaming status + countdown).

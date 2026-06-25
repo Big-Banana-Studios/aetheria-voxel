@@ -16,18 +16,24 @@ export interface TouchCallbacks {
   setFocus: (on: boolean) => void;
   setJump: (on: boolean) => void;
   meditate: () => void;
-  toggleMap: () => void;
   pause: () => void;
 }
 
-/** Coarse-pointer / touch detection. */
-export function isTouchDevice(): boolean {
+/** The device has a touchscreen (true on phones AND touchscreen laptops/2-in-1s). */
+export function hasTouch(): boolean {
   if (typeof window === 'undefined') return false;
   return !!(
     navigator.maxTouchPoints > 0 ||
     'ontouchstart' in window ||
     window.matchMedia?.('(pointer: coarse)')?.matches
   );
+}
+
+/** The device has a precise pointer (mouse / trackpad / stylus). A touchscreen
+ *  laptop reports BOTH this and hasTouch(), so we can't assume touch-only. */
+export function hasFinePointer(): boolean {
+  if (typeof window === 'undefined') return false;
+  return !!window.matchMedia?.('(pointer: fine)')?.matches;
 }
 
 const JOY_RADIUS = 56; // px travel for full deflection
@@ -40,7 +46,6 @@ export class TouchControls {
   private topGroup: HTMLDivElement; // map + pause (play or map)
   private joyBase: HTMLDivElement;
   private joyThumb: HTMLDivElement;
-  private mapBtn: HTMLButtonElement;
 
   private joyId: number | null = null;
   private joyCenter = { x: 0, y: 0 };
@@ -88,15 +93,16 @@ export class TouchControls {
     this.tapButton(medBtn, () => this.cb.meditate());
     this.moveGroup.append(focusBtn, jumpBtn, medBtn);
 
-    // Top utility buttons (visible while playing OR viewing the map).
+    // Pause — top-CENTRE so it never covers the sensor/connection indicators
+    // (top-right) or the cube mini-map (top-left). The map itself is tapped to
+    // open/close, so there's no separate Map button.
     this.topGroup = document.createElement('div');
     this.topGroup.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
     this.el.appendChild(this.topGroup);
-    this.mapBtn = this.actionButton('Map', 'right:26px', 'top:18px', 64, false);
-    const pauseBtn = this.actionButton('⏸', 'right:100px', 'top:18px', 52, false);
-    this.tapButton(this.mapBtn, () => this.cb.toggleMap());
+    const pauseBtn = this.actionButton('⏸', 'left:50%', 'top:14px', 52, false);
+    pauseBtn.style.transform = 'translateX(-50%)';
     this.tapButton(pauseBtn, () => this.cb.pause());
-    this.topGroup.append(this.mapBtn, pauseBtn);
+    this.topGroup.append(pauseBtn);
 
     this.bindJoystick();
     this.bindLook();
@@ -207,20 +213,17 @@ export class TouchControls {
     this.lookZone.addEventListener('touchcancel', end, { passive: false });
   }
 
-  /** Drive visibility from the game state. */
+  /** Drive visibility from the game state. Shown only while playing; in the map
+   *  view the cube itself is tapped (and its background closes it). */
   setState(state: string): void {
-    const playing = state === 'playing';
-    const mapView = state === 'map';
-    if (!playing && !mapView) {
+    if (state !== 'playing') {
       this.hide();
       return;
     }
     this.el.style.display = 'block';
-    this.lookZone.style.display = playing ? 'block' : 'none';
-    this.moveGroup.style.display = playing ? 'block' : 'none';
+    this.lookZone.style.display = 'block';
+    this.moveGroup.style.display = 'block';
     this.topGroup.style.display = 'block';
-    this.mapBtn.textContent = mapView ? 'Close' : 'Map';
-    if (mapView) this.resetInputs();
   }
 
   private hide(): void {

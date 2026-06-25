@@ -6,6 +6,9 @@
  * dwell — never adds time pressure (there are no timers).
  */
 export type Difficulty = 'gentle' | 'standard' | 'deep';
+// 'auto' = follow the device / last-used input; 'mouse' = keyboard + mouse-look
+// (pointer lock); 'touch' = on-screen controls.
+export type ControlMode = 'auto' | 'mouse' | 'touch';
 
 export interface SettingsData {
   masterVolume: number; // 0..1
@@ -14,6 +17,7 @@ export interface SettingsData {
   reduceFlashes: boolean; // damp particle/emissive flashes (photosensitivity)
   difficulty: Difficulty;
   renderScale: number; // 0.5..1.5
+  controls: ControlMode;
 }
 
 const DEFAULTS: SettingsData = {
@@ -23,6 +27,7 @@ const DEFAULTS: SettingsData = {
   reduceFlashes: false,
   difficulty: 'standard',
   renderScale: 1.0,
+  controls: 'auto',
 };
 
 const KEY = 'aetheria-settings';
