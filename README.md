@@ -66,9 +66,20 @@ within a regime, regimes in any order. A GitHub Pages deploy workflow is include
 
 ### Deploy
 
-Push to `main` and the workflow builds + publishes `dist/` to GitHub Pages
-(enable Pages → "GitHub Actions" in repo settings). `vite.config.ts` uses a
-relative `base`, so it works under a project subpath or a custom domain.
+The build is fully static (`vite build` → `dist/`); GitHub Pages serves it
+directly. `vite.config.ts` uses a relative `base`, so it works under a project
+subpath (`user.github.io/<repo>/`) or a custom domain.
+
+**Automatic (push to `main`):** the workflow (`.github/workflows/deploy.yml`)
+builds and force-pushes `dist/` to the **`gh-pages`** branch. One-time setup:
+**Settings → Pages → Build and deployment → Source → "Deploy from a branch" →
+`gh-pages` / `(root)`**.
+
+**Manual (one command):** `npm run deploy` builds and publishes `dist/` to
+`gh-pages` from your machine (uses `npx gh-pages`; `-t` keeps the `.nojekyll`).
+
+A `.nojekyll` file ships in the build so Pages serves the bundle verbatim
+(no Jekyll processing).
 
 **Installable / offline-first.** Production builds register a service worker
 (`public/sw.js`) that precaches the whole app from a build-time manifest, so
