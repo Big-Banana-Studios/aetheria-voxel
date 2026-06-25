@@ -8,12 +8,23 @@
 import type { Settings, SettingsData, Difficulty, ControlMode } from '../core/Settings';
 import type { SaveSystem } from '../core/SaveSystem';
 import { canInstall, promptInstall } from './install';
+import { hasTouch } from './TouchControls';
 
 export interface MenuCallbacks {
   onEnter: () => void; // begin / continue → sensor choice
   onResume: () => void;
   onMainMenu: () => void; // return to title from pause
   onMetrics: () => void; // open the session metrics panel
+  onWelcome: () => void; // re-open the first-launch welcome / onboarding
+}
+
+/** Optional tilt-to-look controls (mobile only). Wired from the Game to the
+ *  TiltControls + Settings so the player can enable, recenter, or turn it off. */
+export interface TiltControlsUI {
+  supported: () => boolean;
+  isOn: () => boolean;
+  setOn: (on: boolean) => Promise<boolean>; // returns false if permission denied
+  recenter: () => void;
 }
 
 /** Live sensor state + actions for the in-Field (pause) sensor controls, so a
@@ -37,6 +48,7 @@ export class MenuSystem {
     private save: SaveSystem,
     private cb: MenuCallbacks,
     private sensors: SensorControls,
+    private tilt: TiltControlsUI,
   ) {
     this.overlay = document.createElement('div');
     this.overlay.style.cssText = [
@@ -90,13 +102,15 @@ export class MenuSystem {
     const completed = this.save.data.levelsCompleted;
     const enter = this.btn(completed > 0 ? 'Continue the Journey' : 'Enter the Field', true);
     enter.onclick = () => this.cb.onEnter();
+    const welcome = this.btn('Welcome');
+    welcome.onclick = () => this.cb.onWelcome();
     const how = this.btn('How to Play');
     how.onclick = () => this.showHowToPlay(() => this.showMain());
     const settings = this.btn('Settings');
     settings.onclick = () => this.showSettings(() => this.showMain());
     const credits = this.btn('Credits');
     credits.onclick = () => this.showCredits(() => this.showMain());
-    this.panel.append(enter, how, settings, credits);
+    this.panel.append(enter, welcome, how, settings, credits);
     // Offer to install as an app when the browser allows it (Android Chrome etc.).
     if (canInstall()) {
       const install = this.btn('⤓ Install app');
@@ -264,6 +278,38 @@ export class MenuSystem {
     ctrlSel.onchange = () => set('controls', ctrlSel.value as ControlMode);
     this.panel.appendChild(this.row('Controls', ctrlSel));
 
+    // Tilt to look — mobile only, off until enabled. A gentle device-motion turns
+    // the view; touch-drag always remains for anyone who turns it off.
+    if (this.tilt.supported() && hasTouch()) {
+      const hint = document.createElement('div');
+      hint.style.cssText = 'opacity:0.55;font-size:0.8rem;margin:4px 0 -2px;text-align:left;line-height:1.5;';
+      hint.textContent = 'Tilt to look — gentle device motion turns your view.';
+      this.panel.appendChild(hint);
+
+      const tiltToggle = this.toggle(
+        () => this.settings.data.tiltLook,
+        (v) => {
+          // Enable must run from this tap (iOS permission gate); honour denial.
+          void this.tilt.setOn(v).then((ok) => {
+            set('tiltLook', v && ok);
+            if (v && !ok) this.showSettings(back); // re-render Off if denied
+          });
+        },
+      );
+      this.panel.appendChild(this.row('Tilt to look', tiltToggle));
+
+      // Recenter — hold the phone comfortably, tap to make that the neutral pose.
+      const recenter = this.btn('Center the view here');
+      recenter.style.margin = '4px 0 6px';
+      recenter.onclick = () => this.tilt.recenter();
+      if (!this.settings.data.tiltLook) recenter.style.opacity = '0.5';
+      this.panel.appendChild(recenter);
+
+      this.panel.appendChild(
+        this.row('Tilt sensitivity', this.slider(0.5, 3, 0.1, () => d.tiltSensitivity, (v) => set('tiltSensitivity', v))),
+      );
+    }
+
     // Save data tools.
     const tools = document.createElement('div');
     tools.style.cssText = 'display:flex;gap:8px;margin-top:14px;';
@@ -324,6 +370,9 @@ export class MenuSystem {
       `border:1px solid rgba(180,142,232,0.4);border-radius:6px;background:rgba(20,12,34,0.6);` +
       `font:0.82rem ui-monospace,Consolas,monospace;color:#e8e0f0">${k}</span>`;
 
+    // Device-aware controls (Task 2): a phone player must never read "press F".
+    const touch = hasTouch();
+
     scroll.innerHTML =
       sec('Your goal',
         'Each of the 27 nodes is a place that has gone quiet. You restore it by <b>settling</b> — letting your body grow calm and steady. ' +
@@ -331,16 +380,24 @@ export class MenuSystem {
         'Nothing punishes you: there are no enemies, no timers, no falling damage, no failure. If you simply spend time in a node, it will always open eventually.') +
 
       sec('Moving around',
-        `${key('W')}${key('A')}${key('S')}${key('D')} or the arrow keys to walk &nbsp;·&nbsp; <b>Mouse</b> to look &nbsp;·&nbsp; ${key('Space')} to jump / rise &nbsp;·&nbsp; ${key('Shift')} to step down. ` +
-        'Click the window first to capture the mouse; press ' + key('Esc') + ' to release it and open this menu.') +
+        touch
+          ? 'The circle at the <b>bottom-left</b> is your movement — slide your thumb the way you want to walk. ' +
+            '<b>Drag anywhere else</b> to look around (or turn on <b>Tilt to look</b> in Settings to glance by gently tilting your phone). ' +
+            'The <b>Jump</b> button rises, and you can tap <b>Pause</b> (top) any time. Turn your phone sideways for the fullest view.'
+          : `${key('W')}${key('A')}${key('S')}${key('D')} or the arrow keys to walk &nbsp;·&nbsp; <b>Mouse</b> to look &nbsp;·&nbsp; ${key('Space')} to jump / rise &nbsp;·&nbsp; ${key('Shift')} to step down. ` +
+            'Click the window first to capture the mouse; press ' + key('Esc') + ' to release it and open this menu.') +
 
       sec('What to do in a node',
-        `<b>Settle.</b> Find the calm spot — often a glowing meditation dais — and press ${key('M')} to sit. ` +
+        (touch
+          ? '<b>Settle.</b> Find the calm spot — often a glowing meditation dais — and tap <b>Meditate</b> to sit. '
+          : `<b>Settle.</b> Find the calm spot — often a glowing meditation dais — and press ${key('M')} to sit. `) +
         'The longer you stay settled, the more the node restores. You can also just stand still and breathe anywhere.<br><br>' +
-        `<b>Resonance locks</b> (glowing crystal clusters): walk up close and <b>hold ${key('F')}</b> for about 2½ seconds to charge one open. ` +
-        'You will see it brighten and swell as it fills — keep holding until it locks. Holding never "resets," so a pause is fine.<br><br>' +
-        `<b>The breathing ring.</b> After a few seconds at a lock (or while settling at the gate) a soft ring fades in to <b>pace your breath</b> — ` +
-        'follow it in and out. This slow breathing is what raises your heart-rhythm above your resting baseline, settling you so locks charge and the gate opens. ' +
+        (touch
+          ? '<b>Crystals</b> (glowing clusters): walk up close and <b>hold the Focus button</b> for about 2½ seconds to wake one. '
+          : `<b>Crystals</b> (glowing clusters): walk up close and <b>hold ${key('F')}</b> for about 2½ seconds to wake one. `) +
+        'You will see it brighten and swell as it fills — keep holding until it wakes. Holding never "resets," so a pause is fine.<br><br>' +
+        `<b>The breathing ring.</b> After a few seconds at a crystal (or while settling at the gate) a soft ring fades in to <b>pace your breath</b> — ` +
+        'follow it in and out. This slow breathing is what settles you so crystals wake and the gate opens. ' +
         'It is only a guide — never required (see “The breathing patterns” below).<br><br>' +
         '<b>Harmonic bridges</b>: these solidify as you settle. The calmer you are, the more solid the path — then walk across. If you slip off, you are gently returned, never hurt.') +
 
@@ -354,18 +411,26 @@ export class MenuSystem {
         'The colour and pace match the node you are in. None of it is timed or scored — if a pace doesn’t suit you, breathe however feels easy; the ring is just an offer.') +
 
       sec('Finding your way',
-        `${key('M')} enter / leave meditation &nbsp;·&nbsp; <b>hold ${key('F')}</b> charge a resonance lock &nbsp;·&nbsp; ` +
-        `${key('C')} open the Lo Shu cube map (see all 27 nodes and your progress) &nbsp;·&nbsp; ` +
-        `${key('V')} your session metrics &nbsp;·&nbsp; ${key('Esc')} pause.`) +
+        touch
+          ? 'Tap <b>Meditate</b> to sit and breathe &nbsp;·&nbsp; <b>hold Focus</b> to wake a crystal &nbsp;·&nbsp; ' +
+            'tap the <b>map</b> (top-left) to see all 27 nodes and your progress &nbsp;·&nbsp; tap <b>Pause</b> to rest. ' +
+            '(Session metrics are in <b>Pause → Session Metrics</b>.)'
+          : `${key('M')} enter / leave meditation &nbsp;·&nbsp; <b>hold ${key('F')}</b> wake a crystal &nbsp;·&nbsp; ` +
+            `${key('C')} open the Lo Shu cube map (see all 27 nodes and your progress) &nbsp;·&nbsp; ` +
+            `${key('V')} your session metrics &nbsp;·&nbsp; ${key('Esc')} pause.`) +
 
       sec('The frequencies',
         'Each node is tuned to one of the 27 Aetheria frequencies. They are <i>felt more than heard</i> — a low, grounding tone. ' +
         'Best on headphones or a subwoofer, but they work on any speaker. With a Muse, your own brain rhythms choose which frequency the Field tunes to. ' +
-        `Without a headset you choose it yourself with the number keys ${key('1')}–${key('9')}.`) +
+        (touch
+          ? 'Without a headset, each node simply plays its own tone.'
+          : `Without a headset you choose it yourself with the number keys ${key('1')}–${key('9')}.`)) +
 
       sec('Playing without sensors — Manual Mode',
         'A complete path, never a lesser one. The game reads your <b>settling from how you play</b>: holding still, slow movement, and entering meditation all deepen it. ' +
-        `Pick frequencies with ${key('1')}–${key('9')}, hold ${key('F')} on locks, and breathe. Everything in the game is reachable this way.`) +
+        (touch
+          ? 'Just move gently, <b>hold Focus</b> on crystals, and breathe. Everything in the game is reachable this way.'
+          : `Pick frequencies with ${key('1')}–${key('9')}, hold ${key('F')} on crystals, and breathe. Everything in the game is reachable this way.`)) +
 
       sec('Adding the Muse S Athena (EEG headband)',
         '<b>Your brain chooses the frequency.</b> The Field listens to your brain rhythms and automatically tunes each node to meet the state you are in — you no longer pick numbers by hand. ' +
@@ -379,7 +444,7 @@ export class MenuSystem {
 
       sec('Using both together',
         'The richest experience: the <b>Muse chooses</b> the frequency for where your mind is, while the <b>Polar gates</b> the settling from your heart. ' +
-        'Every signal is recorded for your session metrics (' + key('V') + ') as honest, raw data — never a grade. ' +
+        'Every signal is recorded for your session metrics (' + (touch ? '<b>Pause → Session Metrics</b>' : key('V')) + ') as honest, raw data — never a grade. ' +
         'If a sensor drops out mid-journey, reconnect it any time from <b>Pause → Sensors</b>; the Field falls back gracefully until it returns.') +
 
       sec('A gentle promise',

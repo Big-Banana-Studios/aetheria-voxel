@@ -36,6 +36,9 @@ import { MetricsTracker } from './MetricsTracker';
 import { MetricsPanel } from '../ui/MetricsPanel';
 import { SetupScreen } from '../ui/SetupScreen';
 import { TouchControls, hasTouch, hasFinePointer } from '../ui/TouchControls';
+import { Onboarding } from '../ui/Onboarding';
+import { RotatePrompt } from '../ui/RotatePrompt';
+import { TiltControls } from './TiltControls';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -97,6 +100,9 @@ export class Game {
   private metrics = new MetricsTracker();
   private metricsPanel!: MetricsPanel;
   private setup!: SetupScreen;
+  private onboarding!: Onboarding; // first-launch welcome (auto, skippable)
+  private rotatePrompt!: RotatePrompt; // mobile landscape guidance
+  private tilt = new TiltControls(); // optional tilt-to-look (mobile)
   private touch?: TouchControls; // on-screen controls (created on touch-capable hw)
   private touchCapable = false; // device has a touchscreen
   private usingTouch = false; // resolved active input mode (touch vs mouse/keyboard)
@@ -171,6 +177,7 @@ export class Game {
       onResume: () => this.resume(),
       onMainMenu: () => this.showMainMenu(),
       onMetrics: () => this.metricsPanel.show(this.metrics),
+      onWelcome: () => this.onboarding.show(),
     }, {
       museConnected: () => this.muse.isConnected,
       polarConnected: () => this.polar.isConnected,
@@ -178,10 +185,25 @@ export class Game {
       connectPolar: () => this.polar.connect(),
       disconnectMuse: () => { this.muse.disconnect(); this.usingMuse = false; },
       disconnectPolar: () => this.polar.disconnect(),
+    }, {
+      // Tilt-to-look (mobile, optional). enable() runs from the Settings toggle
+      // tap so iOS can grant motion permission from a user gesture.
+      supported: () => TiltControls.isSupported(),
+      isOn: () => this.tilt.enabled,
+      setOn: (on) => {
+        if (on) return this.tilt.enable();
+        this.tilt.disable();
+        return Promise.resolve(true);
+      },
+      recenter: () => this.tilt.recenter(),
     });
     this.metricsPanel = new MetricsPanel(this.opts.hud);
     this.metricsPanel.onExport = () => this.downloadSignalLog();
     this.setup = new SetupScreen(this.opts.hud);
+    this.onboarding = new Onboarding(this.opts.hud);
+    // Mobile landscape guidance: prompt in portrait + keep the renderer correct on
+    // every rotate/resize (the canvas, breath ring, map, and pause all reflow).
+    this.rotatePrompt = new RotatePrompt(this.opts.hud, () => this.resize());
     this.metricsPanel.onClose = () => {
       // Returning from metrics while in the Field re-locks the cursor.
       if (this.state === 'metrics') { this.state = 'playing'; this.requestPlay(); }
@@ -405,6 +427,12 @@ export class Game {
     this.player?.setReduceMotion(s.reduceMotion);
     // Re-resolve the control mode when the Controls setting changes.
     this.applyControls();
+    // Tilt-to-look (mobile): keep sensitivity live and reconcile on/off with the
+    // saved preference. Auto-enable is best-effort (Android grants without a
+    // gesture; iOS needs the Settings tap, handled by the menu's setOn).
+    this.tilt.sensitivity = s.tiltSensitivity;
+    if (s.tiltLook && !this.tilt.enabled) void this.tilt.enable();
+    else if (!s.tiltLook && this.tilt.enabled) this.tilt.disable();
     // Reduce flashes → gentler bloom (photosensitivity, Section 14.3).
     if (this.bloom) this.bloom.strength = s.reduceFlashes ? 0.22 : 0.5;
     // Render scale (perf / quality).
@@ -449,6 +477,9 @@ export class Game {
     this.hud.hideSetupBar();
     this.setup.hide();
     this.state = 'playing';
+    // Best-effort landscape lock — this runs off the player's "enter" tap, the
+    // user gesture browsers require. iOS ignores it; the rotate prompt guides there.
+    void this.rotatePrompt.tryLockLandscape();
     this.requestPlay();
     // Honest note: the healing tones are felt more than heard (sub-bass), so
     // many speakers won't reproduce the carrier (Selah Task 3, caution 1).
@@ -465,6 +496,9 @@ export class Game {
     if (this.hud.cubeIsHero) this.hud.hideCubeHero();
     if (this.player?.isLocked) this.player.unlock();
     this.menus.showMain();
+    // First exposure to the welcome must be automatic (shown once, remembered).
+    // It sits above the title; closing it leaves the player on the menu.
+    this.onboarding.maybeShow();
   }
 
   /** From the title's "Enter the Field": guided sensor setup + calibration. */
@@ -630,6 +664,13 @@ export class Game {
 
     // Player movement (only when locked / playing).
     if (this.playing) this.player.update(dt);
+
+    // Optional tilt-to-look (mobile): fold the smoothed tilt into the view exactly
+    // like a drag. Touch-drag still works alongside it.
+    if (this.playing && this.tilt.enabled) {
+      const look = this.tilt.consume(dt);
+      if (look) this.player.applyLook(look.dx, look.dy);
+    }
 
     // Behaviour settling is always live as the universal fallback.
     const moved = this.player.feet.distanceTo(this.lastFeet) > 0.02;

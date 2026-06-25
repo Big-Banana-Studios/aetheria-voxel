@@ -18,6 +18,8 @@ export interface SettingsData {
   difficulty: Difficulty;
   renderScale: number; // 0.5..1.5
   controls: ControlMode;
+  tiltLook: boolean; // mobile: gentle device-motion turns the view (off until enabled)
+  tiltSensitivity: number; // 0.5..3 — how strongly a tilt turns the view
 }
 
 const DEFAULTS: SettingsData = {
@@ -28,6 +30,8 @@ const DEFAULTS: SettingsData = {
   difficulty: 'standard',
   renderScale: 1.0,
   controls: 'auto',
+  tiltLook: false,
+  tiltSensitivity: 1.5,
 };
 
 const KEY = 'aetheria-settings';
