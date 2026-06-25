@@ -51,6 +51,8 @@ export class CubeMiniMap {
   private updateAccum = 0; // throttle the costly SVG-filter repaint
 
   onSelectNode?: (index: number) => void;
+  /** Click/tap the map itself to toggle corner ↔ hero (big ↔ small). */
+  onToggle?: () => void;
 
   constructor(private freqTable: FrequencyTable) {
     this.el = document.createElement('div');
@@ -58,7 +60,10 @@ export class CubeMiniMap {
       'position:fixed',
       'top:14px',
       'left:14px',
-      'z-index:12',
+      // Above the touch overlay (z16) so tapping the corner map expands it;
+      // below the menus (z40). The corner map sits top-left, clear of the
+      // touch buttons, and the hero panel is centred, clear of the top buttons.
+      'z-index:18',
       'transition:all 0.4s ease',
       'pointer-events:none',
     ].join(';');
@@ -66,6 +71,22 @@ export class CubeMiniMap {
     this.svg = document.createElementNS(SVGNS, 'svg');
     this.svg.setAttribute('viewBox', '0 0 160 220');
     this.el.appendChild(this.svg);
+
+    // One pointer handler for mouse + touch + pen: tapping a travellable node in
+    // hero view travels there; tapping anywhere else on the map toggles its size
+    // (corner → expand, hero → shrink).
+    this.el.addEventListener('pointerup', (e) => {
+      const t = e.target as Element | null;
+      const idxAttr = t instanceof SVGCircleElement ? t.dataset.index : undefined;
+      if (idxAttr !== undefined) {
+        const idx = Number(idxAttr);
+        if (this.mode === 'hero' && this.unlocked.has(idx)) {
+          this.onSelectNode?.(idx);
+          return;
+        }
+      }
+      this.onToggle?.();
+    });
 
     this.computeNodes();
     this.drawEdges();
@@ -141,9 +162,8 @@ export class CubeMiniMap {
       c.setAttribute('fill', REGIME_COLOR[n.regime]);
       c.dataset.index = String(n.index);
       c.style.cursor = 'pointer';
-      c.addEventListener('click', () => {
-        if (this.mode === 'hero' && this.unlocked.has(n.index)) this.onSelectNode?.(n.index);
-      });
+      // Selection/toggle is handled by the single pointerup listener on `el`
+      // (which inspects the event target) so it works for touch and mouse alike.
       this.circles.push(c);
       this.svg.appendChild(c);
     }
@@ -169,7 +189,8 @@ export class CubeMiniMap {
       this.el.style.top = '14px';
       this.el.style.left = '14px';
       this.el.style.transform = 'none';
-      this.el.style.pointerEvents = 'none';
+      this.el.style.pointerEvents = 'auto'; // tap the corner map to expand it
+      this.el.style.cursor = 'pointer';
       this.el.style.background = 'none';
       this.el.style.padding = '0';
     } else {

@@ -174,6 +174,9 @@ export class HUD {
   set onSelectNode(cb: (index: number) => void) {
     this.cube.onSelectNode = cb;
   }
+  set onToggleMap(cb: () => void) {
+    this.cube.onToggle = cb;
+  }
   toggleCube(): void {
     this.cube.toggleHero();
   }

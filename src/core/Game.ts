@@ -35,6 +35,7 @@ import { MenuSystem } from '../ui/Menus';
 import { MetricsTracker } from './MetricsTracker';
 import { MetricsPanel } from '../ui/MetricsPanel';
 import { SetupScreen } from '../ui/SetupScreen';
+import { TouchControls, isTouchDevice } from '../ui/TouchControls';
 
 export interface GameOptions {
   canvas: HTMLCanvasElement;
@@ -96,6 +97,8 @@ export class Game {
   private metrics = new MetricsTracker();
   private metricsPanel!: MetricsPanel;
   private setup!: SetupScreen;
+  private touch?: TouchControls; // on-screen controls (touch devices only)
+  private lastTouchState = '';
   // Shell state machine.
   private state: 'menu' | 'setup' | 'playing' | 'paused' | 'map' | 'complete' | 'metrics' = 'menu';
 
@@ -142,6 +145,7 @@ export class Game {
     this.freqTable = await FrequencyTable.load();
     this.hud = new HUD(this.opts.hud, this.freqTable);
     this.hud.onSelectNode = (index) => this.travelToNode(index);
+    this.hud.onToggleMap = () => this.toggleCube();
     this.muse = new MuseClient(this.freqTable);
     this.debug = new EEGDebugOverlay(this.opts.hud);
 
@@ -184,6 +188,21 @@ export class Game {
     this.player = new PlayerController(this.camera, this.renderer.domElement, this.world);
     this.player.controls.addEventListener('unlock', () => this.onPointerUnlock());
     this.player.controls.addEventListener('lock', () => this.setPlaying(true));
+
+    // On-screen controls for touch devices (Android phones/tablets). Desktop is
+    // unchanged (keyboard + pointer-lock). Web Bluetooth still works in Android
+    // Chrome, so the Muse/Polar sensors are available on the phone too.
+    if (isTouchDevice()) {
+      this.touch = new TouchControls(this.opts.hud, {
+        move: (x, z) => this.player.setMoveVector(x, z),
+        look: (dx, dy) => this.player.applyLook(dx, dy),
+        setFocus: (on) => this.player.setFocusing(on),
+        setJump: (on) => this.player.setJump(on),
+        meditate: () => this.player.meditateToggle(),
+        toggleMap: () => this.toggleCube(),
+        pause: () => this.touchPause(),
+      });
+    }
 
     // HUD setup-bar wiring (hidden until the player chooses to enter).
     this.hud.onConnectMuse = () => this.connectMuse();
@@ -321,7 +340,7 @@ export class Game {
     } else if (this.state === 'playing') {
       // Set state before unlocking so the unlock doesn't trigger the pause menu.
       this.state = 'metrics';
-      this.player.unlock();
+      if (this.touch) this.setPlaying(false); else this.player.unlock();
       this.metricsPanel.show(this.metrics);
     } else if (this.state === 'paused' || this.state === 'complete') {
       this.metricsPanel.show(this.metrics); // cursor already free
@@ -334,10 +353,10 @@ export class Game {
     this.hud.toggleCube();
     if (this.hud.cubeIsHero) {
       this.state = 'map';
-      this.player.unlock();
+      if (this.touch) this.setPlaying(false); else this.player.unlock();
     } else {
       this.state = 'playing';
-      this.player.lock();
+      if (this.touch) this.setPlaying(true); else this.player.lock();
     }
   }
 
@@ -474,7 +493,19 @@ export class Game {
 
   requestPlay(): void {
     this.audio.start().catch((e) => console.warn('[Aetheria] Audio start failed', e));
-    this.player.lock();
+    if (this.touch) {
+      // Touch devices have no pointer-lock; enter play directly and use the
+      // on-screen controls instead.
+      this.setPlaying(true);
+    } else {
+      this.player.lock();
+    }
+  }
+
+  /** Pause from the on-screen touch button (no pointer-unlock event fires). */
+  private touchPause(): void {
+    this.setPlaying(false);
+    this.pause();
   }
 
   private setPlaying(p: boolean): void {
@@ -509,6 +540,13 @@ export class Game {
   }
 
   private update(dt: number): void {
+    // Keep the on-screen touch controls in sync with the game state (show during
+    // play / map, hide for menus). Only writes DOM when the state changes.
+    if (this.touch && this.state !== this.lastTouchState) {
+      this.lastTouchState = this.state;
+      this.touch.setState(this.state);
+    }
+
     // Live setup-screen feedback (signal bars + streaming status + countdown).
     if (this.state === 'setup' && this.setup.isVisible) {
       const sm = this.muse.getMetrics();

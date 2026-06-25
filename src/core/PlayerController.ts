@@ -47,6 +47,11 @@ export class PlayerController {
   private flyMode = false;
 
   private move = { forward: false, back: false, left: false, right: false, up: false, down: false, jump: false };
+  // Analog movement from a touch joystick (x = strafe, z = forward; −1..1).
+  private moveVec = { x: 0, z: 0 };
+  // Reusable euler for touch look (PointerLockControls handles mouse look).
+  private lookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+  private static readonly LOOK_SENSITIVITY = 0.004; // rad per pixel of drag
 
   isFocusing = false;
   isMeditating = false;
@@ -131,6 +136,35 @@ export class PlayerController {
     for (const cb of this.meditationListeners) cb(this.isMeditating);
   }
 
+  // ── Touch input (mobile) — desktop keeps keyboard + pointer-lock untouched ──
+
+  /** Analog walk from a virtual joystick. x = strafe (right +), z = forward (+). */
+  setMoveVector(x: number, z: number): void {
+    this.moveVec.x = x;
+    this.moveVec.z = z;
+  }
+  /** Drag-to-look: pixel deltas → camera yaw/pitch (clamped), no pointer-lock. */
+  applyLook(dx: number, dy: number): void {
+    const s = PlayerController.LOOK_SENSITIVITY;
+    this.lookEuler.setFromQuaternion(this.camera.quaternion);
+    this.lookEuler.y -= dx * s;
+    this.lookEuler.x -= dy * s;
+    const limit = Math.PI / 2 - 0.02;
+    this.lookEuler.x = Math.max(-limit, Math.min(limit, this.lookEuler.x));
+    this.camera.quaternion.setFromEuler(this.lookEuler);
+  }
+  setFocusing(v: boolean): void {
+    this.isFocusing = v;
+  }
+  setJump(v: boolean): void {
+    this.move.jump = v;
+    this.move.up = v;
+  }
+  /** Public meditation toggle for the touch button (M key is handled internally). */
+  meditateToggle(): void {
+    this.toggleMeditation();
+  }
+
   // ── Collision ──
 
   private boxCollides(fx: number, fy: number, fz: number): boolean {
@@ -166,11 +200,12 @@ export class PlayerController {
     forward.normalize();
     const rightVec = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
 
-    if (this.move.forward) wish.add(forward);
-    if (this.move.back) wish.sub(forward);
-    if (this.move.right) wish.add(rightVec);
-    if (this.move.left) wish.sub(rightVec);
-    if (wish.lengthSq() > 0) wish.normalize();
+    // Keyboard (booleans) and touch joystick (analog) combine into one wish.
+    const strafe = (this.move.right ? 1 : 0) - (this.move.left ? 1 : 0) + this.moveVec.x;
+    const fwd = (this.move.forward ? 1 : 0) - (this.move.back ? 1 : 0) + this.moveVec.z;
+    wish.addScaledVector(forward, fwd).addScaledVector(rightVec, strafe);
+    const wishLen = wish.length();
+    if (wishLen > 1) wish.multiplyScalar(1 / wishLen); // cap speed; keep analog partials
 
     // Meditation gently halts movement and lifts the view (Section 6.1).
     const moveScale = this.isMeditating ? 0.0 : 1.0;
