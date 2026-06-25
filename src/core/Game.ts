@@ -232,28 +232,33 @@ export class Game {
     // Player movement (only when locked / playing).
     if (this.playing) this.player.update(dt);
 
-    // Manual Mode simulates coherence from behaviour.
+    // Behaviour settling is always live as the universal fallback.
     const moved = this.player.feet.distanceTo(this.lastFeet) > 0.02;
     this.lastFeet.copy(this.player.feet);
     const meditating = this.player.isMeditating || this.isNearMeditation();
-    if (!this.usingMuse) this.manual.update(dt, moved, meditating);
-
-    // Polar H10 heart coherence (optional, fuses with the active source).
+    this.manual.update(dt, moved, meditating);
     this.polar.update(dt);
 
     const source = this.getSource();
-    const baseCoherence = source.getCoherenceScore();
+    // The BRAIN only chooses which frequency (prescription / manual selection).
     const freqIndex = source.getPrescribedFrequencyIndex();
     const bands = source.getBandPowers();
 
-    // Fuse heart (HRV) settledness with the EEG/behaviour signal when the Polar
-    // H10 is connected and has a baseline. Heart settledness leads in Manual Mode
-    // (it is a real biosignal); EEG leads when a Muse is streaming. Fallback
-    // chain per Selah's guide: HRV → behaviour/EEG → (timer ceiling in the level).
-    let coherence = baseCoherence;
+    // Settle-signal fallback chain (Selah Task 2): the BODY's settling drives the
+    // gate — HRV (Polar) → relative stillness (Muse accelerometer) → behaviour.
+    // EEG "coherence" never gates (honest-claims rule); it is only logged. The
+    // level's max-dwell ceiling is the final fallback below all of these.
+    let coherence: number;
+    let settleSource: 'hrv' | 'stillness' | 'behaviour';
     if (this.polar.isConnected && this.polar.hasBaseline) {
-      const hc = this.polar.getSettledness();
-      coherence = this.usingMuse ? 0.6 * baseCoherence + 0.4 * hc : 0.4 * baseCoherence + 0.6 * hc;
+      coherence = this.polar.getSettledness();
+      settleSource = 'hrv';
+    } else if (this.usingMuse && this.muse.isConnected && this.muse.hasStillness) {
+      coherence = this.muse.getStillness();
+      settleSource = 'stillness';
+    } else {
+      coherence = this.manual.getCoherenceScore();
+      settleSource = 'behaviour';
     }
 
     // Drive the level (which drives world shader, audio, and every prop).
@@ -281,7 +286,10 @@ export class Game {
         freqIndex,
         trueHz: entry.frequency_hz,
         playbackHz: entry.playback_hz ?? 0,
-        baseSignal: baseCoherence,
+        settleSource,
+        behaviourSettling: this.manual.getCoherenceScore(),
+        museStillness: this.usingMuse ? this.muse.getStillness() : 0,
+        eegCoherence: this.usingMuse ? this.muse.getCoherenceScore() : 0,
         heartSettledness: this.polar.getSettledness(),
         fusedSettledness: coherence,
         hrvRmssd: this.polar.getRmssd(),

@@ -91,8 +91,16 @@ the EEG/behaviour coherence (heart leads in Manual Mode, EEG leads with a Muse).
   level, or any brain-state score. (Anti-fake-neurofeedback.)
 - **Guaranteed progress.** Every level has a max-dwell ceiling and the gate can
   force-open — no level is ever a wall.
-- **Graceful degradation.** HRV (Polar) → behaviour/EEG → timer ceiling. The
-  game is whole with no sensor connected.
+- **Brain chooses, body gates.** EEG band-power *prescribes the frequency*; the
+  *settle gate* is driven by the body — HRV (Polar) → relative stillness (Muse
+  accelerometer) → behaviour → the level's max-dwell ceiling. EEG "coherence" is
+  logged but never gates (honest-claims rule).
+- **Graceful degradation.** Every link in that chain falls through to the next;
+  the game is whole with no sensor connected.
+- **Chord/mud check.** `node scripts/chord-check.mjs` runs the Sethares
+  sensory-dissonance model (`src/audio/Dissonance.ts`) over the folded playback
+  frequencies → `docs/chord-check-report.md`. Verdict: single tones (current
+  engine) are clean; any future chord/drone must be gated through it.
 - **Log everything.** All signals are recorded each tick in parallel
   (`aetheria.downloadSignalLog()` in the console) — a third witness for later
   fusion decisions, never shown to the player as a score.

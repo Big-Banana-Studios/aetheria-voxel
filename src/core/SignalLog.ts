@@ -18,9 +18,12 @@ export interface SignalRecord {
   freqIndex: number;
   trueHz: number;
   playbackHz: number;
-  baseSignal: number; // EEG/behaviour settling 0..1
+  settleSource: 'hrv' | 'stillness' | 'behaviour'; // which signal gated this tick
+  behaviourSettling: number; // Manual behaviour settle 0..1 (always available)
+  museStillness: number; // Muse accelerometer relative stillness 0..1
+  eegCoherence: number; // EEG PLV — logged only, never gates (honest-claims rule)
   heartSettledness: number; // HRV settledness 0..1
-  fusedSettledness: number; // what actually drove the world
+  fusedSettledness: number; // what actually drove the world this tick
   hrvRmssd: number | null; // ms
   hrvBaseline: number | null; // ms
   bpm: number;

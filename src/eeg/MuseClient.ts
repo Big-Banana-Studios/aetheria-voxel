@@ -8,10 +8,11 @@
  * signal quality, and broadcasts events.
  */
 import './athena-core.js'; // side-effect: attaches window.AthenaDevice
-import type { AthenaDevice, AthenaEEGData } from './athena-core';
+import type { AthenaDevice, AthenaEEGData, AthenaAccGyroData } from './athena-core';
 import { BandPowerAnalyzer } from './BandPowerAnalyzer';
 import { CoherenceCalculator } from './CoherenceCalculator';
 import { FrequencyPrescriber } from './FrequencyPrescriber';
+import { StillnessIndex } from './StillnessIndex';
 import {
   type BandPowerResult,
   type CoherenceSource,
@@ -38,6 +39,8 @@ export class MuseClient implements CoherenceSource {
   private analyzer = new BandPowerAnalyzer(FS);
   private coherence = new CoherenceCalculator(FS);
   private prescriber = new FrequencyPrescriber();
+  private stillness = new StillnessIndex();
+  private stillnessValue = 0;
 
   private bands: BandPowerResult = emptyBandPower();
   private coherenceScore = 0;
@@ -76,6 +79,7 @@ export class MuseClient implements CoherenceSource {
         preset: 'p1041',
         processInterval: 1000,
         onEEG: (d) => this.onEEG(d),
+        onAccGyro: (d) => this.onAccGyro(d),
         onStatus: (s) => this.onStatus(s),
         onLog: () => {},
       });
@@ -136,6 +140,14 @@ export class MuseClient implements CoherenceSource {
   getCoherenceScore(): number {
     return this.coherenceScore;
   }
+  /** Relative bodily-stillness from the accelerometer (0..1) — the honest settle
+   *  signal for the Muse path (Selah Task 2 fallback). */
+  getStillness(): number {
+    return this.stillnessValue;
+  }
+  get hasStillness(): boolean {
+    return this.stillness.hasBaseline;
+  }
   getPrescribedFrequencyIndex(): number {
     return this.prescribedIndex;
   }
@@ -183,6 +195,13 @@ export class MuseClient implements CoherenceSource {
     }
   }
 
+  private onAccGyro(d: AthenaAccGyroData): void {
+    // Feed accel magnitude into the relative stillness index (Selah fallback).
+    for (const row of d.samples) {
+      this.stillness.push(row[0] ?? 0, row[1] ?? 0, row[2] ?? 0);
+    }
+  }
+
   private startPipeline(): void {
     if (this.timer !== null) return;
     this.timer = window.setInterval(() => this.process(), 1000 / UPDATE_HZ);
@@ -206,7 +225,13 @@ export class MuseClient implements CoherenceSource {
     const abs = BandPowerAnalyzer.average([af7, af8]);
     if (abs) this.bands = BandPowerAnalyzer.toBandPowerResult(abs);
 
-    // Coherence across all 4 channels.
+    // Relative stillness from the accelerometer (the honest Muse settle signal).
+    if (!this.stillness.hasBaseline) this.stillness.captureBaseline();
+    const st = this.stillness.settledness();
+    if (st != null) this.stillnessValue += (st - this.stillnessValue) * 0.4;
+
+    // EEG coherence (PLV) across all 4 channels — retained for logging/context;
+    // per the honest-claims rule it does NOT drive the gate (stillness does).
     const newCoh = this.coherence.compute(this.buffers);
     this.bands.overallCoherence = newCoh;
 
