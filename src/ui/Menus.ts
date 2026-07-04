@@ -385,7 +385,8 @@ export class MenuSystem {
     scroll.innerHTML =
       sec('Your goal',
         'Each of the 27 nodes is a place that has gone quiet. You restore it by <b>settling</b> — letting your body grow calm and steady. ' +
-        'As you settle, the Field around you brightens, bridges form, and crystals wake. When a node is restored, the next opens on the map. ' +
+        'As you settle, the Field around you brightens, bridges form, and crystals wake. When a node is restored, its tone eases to silence and ' +
+        'the path <b>gently carries you onward</b> to the next node on its own — so you never get stuck. (You can always open the map and choose a different node instead.) ' +
         'Nothing punishes you: there are no enemies, no timers, no falling damage, no failure. If you simply spend time in a node, it will always open eventually.') +
 
       sec('Moving around',
@@ -408,7 +409,23 @@ export class MenuSystem {
         `<b>The breathing ring.</b> After a few seconds at a crystal (or while settling at the gate) a soft ring fades in to <b>pace your breath</b> — ` +
         'follow it in and out. This slow breathing is what settles you so crystals wake and the gate opens. ' +
         'It is only a guide — never required (see “The breathing patterns” below).<br><br>' +
-        '<b>Harmonic bridges</b>: these solidify as you settle. The calmer you are, the more solid the path — then walk across. If you slip off, you are gently returned, never hurt.') +
+        '<b>Harmonic bridges</b>: these solidify as you settle. The calmer you are, the more solid the path — then walk across. If you slip off, you are gently returned, never hurt.<br><br>' +
+        '<b>The gate &amp; the portal.</b> Beyond the bridge, a luminous gate guards the still centre; it dissolves as you settle (or opens on its own after a while). ' +
+        'When it opens, a <b>portal</b> appears facing the meditation dais — step through it to arrive at the still centre. On a node you have already restored, ' +
+        'the gate and portal stand open from the start, so you can walk straight through and simply sit.') +
+
+      sec('Walking the cube',
+        'The 27 nodes are the cells of a 3×3×3 cube (the Lo&nbsp;Shu). You travel through them along a <b>walk</b> — a set path through the cube — and the Field carries ' +
+        'you from one node to the next as you restore them. There are four walks, each tracing the cube a different way:' +
+        '<div style="margin-top:0.5rem;line-height:1.9">' +
+        '<b>Vortex</b> — from each layer’s centre, spiralling outward.<br>' +
+        '<b>Ascent</b> — grounding upward, one through nine.<br>' +
+        '<b>Pillar</b> — straight up through gut, heart and head, one quality at a time.<br>' +
+        '<b>Ouroboros</b> — a closed figure-eight through all twenty-seven, crossing the centre (source) three times.' +
+        '</div><br>' +
+        'Finish all four and the <b>CABI</b> walk opens: the full 110-step circuit, <b>paced by your own settling</b> — it moves on as your body eases, and pauses ' +
+        'in silence for a moment at the start to learn your resting rhythm. The small label at the <b>top-right</b> shows which walk you are on and how far along. ' +
+        'You are always free to wander the map yourself — but left alone, the path walks itself, and every node opens in time.') +
 
       sec('The breathing patterns',
         'Each regime has its own pace, shown on the breathing ring with its name. Breathe along — in as the ring grows, out as it shrinks:' +
