@@ -8,3 +8,22 @@ dist-ssr
 
 # verification screenshots (regenerate with scripts/screenshot.mjs)
 docs/shots/
+
+# Reference / vendor material dropped at the repo root — NOT part of the game
+# build (the used copy of aetheria-signal.js is vendored in src/eeg/). Anchored
+# to the repo root with a leading slash so they never shadow the src/eeg/ copies
+# of polar-h10.js / aetheria-signal.js.
+/aetheria-bus.js
+/aetheria-signal.js
+/hrv-analysis.js
+/interval-analysis.js
+/neurodynamics.js
+/polar-h10.js
+/polar-wiring.js
+/prescription-engine.js
+/sensor-base.js
+/spiral-wave.js
+/sophia_signal_integrity_and_calibration_GUIDE.md
+/SOPHIA_REGIME_COLLIDER_CLOSED_LOOP_v2.md
+/sophia-*.csv
+/tools/

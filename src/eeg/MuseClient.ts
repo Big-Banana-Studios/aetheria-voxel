@@ -8,10 +8,12 @@
  * signal quality, and broadcasts events.
  */
 import './athena-core.js'; // side-effect: attaches window.AthenaDevice
+import './aetheria-signal.js'; // side-effect: attaches window.AetheriaSignal
 import type { AthenaDevice, AthenaEEGData, AthenaAccGyroData } from './athena-core';
+import type { SignalProcessor, ProvenanceResult } from './aetheria-signal';
 import { BandPowerAnalyzer } from './BandPowerAnalyzer';
 import { CoherenceCalculator } from './CoherenceCalculator';
-import { FrequencyPrescriber } from './FrequencyPrescriber';
+import { FrequencyPrescriber, type ResonanceReadout } from './FrequencyPrescriber';
 import { StillnessIndex } from './StillnessIndex';
 import {
   type BandPowerResult,
@@ -44,6 +46,14 @@ export interface MuseDiagnostics {
   ppgStreaming: boolean;
   fnirsStreaming: boolean;
   lastLog: string;
+  // Device identity + EEG stream integrity (channel-map / detection surface —
+  // Selah's calibration guide, TASK 1). We read scalp channels BY LABEL, so we
+  // can't silently read AUX as scalp; these make any real problem visible.
+  deviceName: string | null; // BLE name (e.g. 'MuseS-1234')
+  firmware: string; // firmware string once known
+  eegMode: string | null; // 'EEG8' (8-ch Athena) | 'EEG4' | null (no EEG stream)
+  eegPackets: number; // EEG packets decoded so far; 0 ⇒ no scalp stream arriving
+  scalpMapped: boolean; // all four scalp labels (TP9/AF7/AF8/TP10) present in the stream
 }
 
 type Listener = (payload?: unknown) => void;
@@ -72,6 +82,16 @@ export class MuseClient implements CoherenceSource {
   // Optical-stream diagnostics (the fNIRS/PPG troubleshooting surface).
   private opticsPackets = 0;
   private lastLog = '';
+
+  // Signal provenance (aetheria-signal.js): every raw sample is streamed through
+  // an extract-and-disclose processor so the session export can honestly report
+  // how much was clean vs recovered. Never alters the gate/metrics stream.
+  private processor: SignalProcessor | null = null;
+  private lastAcc: number[] | null = null;
+  // Whether the four scalp labels resolved in the live EEG stream. Starts true
+  // (nothing wrong yet); flips false only if a real stream is missing a scalp
+  // label — the honest "possible channel-map problem" signal (never silent).
+  private scalpMapped = true;
 
   // Calibration (Section 12.2 — avoid recalibrating each session).
   private calibrating = false;
@@ -139,6 +159,8 @@ export class MuseClient implements CoherenceSource {
       await this.device.connect();
       await this.device.startStream();
       this.connected = true;
+      // Fresh provenance processor per connection (if the module is present).
+      this.processor = window.AetheriaSignal ? window.AetheriaSignal.makeProcessor('muse', { fs: FS }) : null;
       this.startPipeline();
       this.emit('connected');
       return true;
@@ -158,6 +180,11 @@ export class MuseClient implements CoherenceSource {
       ppgStreaming: this.device?.ppg != null,
       fnirsStreaming: this.device?.fnirs != null,
       lastLog: this.lastLog,
+      deviceName: this.device?.deviceName ?? null,
+      firmware: this.device?.firmware ?? '',
+      eegMode: this.device?.eegMode ?? null,
+      eegPackets: this.device?.counts.eeg ?? 0,
+      scalpMapped: this.scalpMapped,
     };
   }
 
@@ -167,6 +194,8 @@ export class MuseClient implements CoherenceSource {
       this.device.disconnect().catch(() => {});
       this.device = null;
     }
+    this.processor = null;
+    this.lastAcc = null;
     this.connected = false;
     this.emit('disconnected');
   }
@@ -245,6 +274,27 @@ export class MuseClient implements CoherenceSource {
   getPrescribedFrequencyIndex(): number {
     return this.prescribedIndex;
   }
+
+  /** The continuous placement signal (pre-rescale resonance score + components +
+   *  the discrete state/offset it resolved to). Null with no live EEG. Logged in
+   *  parallel so the placement range can be calibrated from data. */
+  getResonance(): ResonanceReadout | null {
+    return this.connected ? this.prescriber.getLastReadout() : null;
+  }
+
+  /** A window of raw scalp samples [[TP9,AF7,AF8,TP10], ...] for the calibration
+   *  gate (aetheria-signal.js). Null until a full 1s window has buffered. */
+  getRawWindow(): number[][] | null {
+    if (this.buffers.some((b) => b.length < WINDOW)) return null;
+    const out: number[][] = new Array(WINDOW);
+    for (let i = 0; i < WINDOW; i++) out[i] = [this.buffers[0][i], this.buffers[1][i], this.buffers[2][i], this.buffers[3][i]];
+    return out;
+  }
+
+  /** Provenance snapshot for the session export (clean-vs-recovered disclosure). */
+  getProvenance(): ProvenanceResult | null {
+    return this.processor ? this.processor.finalize() : null;
+  }
   getPrescribedFrequencyHz(): number {
     return this.freqTable.hz(this.prescribedIndex);
   }
@@ -278,14 +328,22 @@ export class MuseClient implements CoherenceSource {
       d.labels.indexOf('AF8'),
       d.labels.indexOf('TP10'),
     ];
+    // If any scalp label is missing from the stream, our label-based read would
+    // fall back to 0 for it — flag it so setup can warn (never mismap silently).
+    this.scalpMapped = idx.every((i) => i >= 0);
     for (const row of d.samples) {
+      const ch = [0, 0, 0, 0];
       for (let c = 0; c < 4; c++) {
         const v = idx[c] >= 0 ? row[idx[c]] : 0;
         // Reject gross artifacts (Section 12.2).
         const clean = Math.abs(v) > ARTIFACT_UV ? 0 : v;
         this.buffers[c].push(clean);
         if (this.buffers[c].length > WINDOW) this.buffers[c].shift();
+        ch[c] = idx[c] >= 0 ? row[idx[c]] : 0; // provenance sees the untouched raw
       }
+      // Stream the raw scalp sample through the provenance processor (RAW is
+      // sacred there; it discloses clean-vs-recovered, never alters our stream).
+      this.processor?.push({ ch, acc: this.lastAcc ?? undefined });
     }
   }
 
@@ -294,6 +352,8 @@ export class MuseClient implements CoherenceSource {
     for (const row of d.samples) {
       this.stillness.push(row[0] ?? 0, row[1] ?? 0, row[2] ?? 0);
     }
+    const last = d.samples[d.samples.length - 1];
+    if (last) this.lastAcc = [last[0] ?? 0, last[1] ?? 0, last[2] ?? 0];
   }
 
   private startPipeline(): void {

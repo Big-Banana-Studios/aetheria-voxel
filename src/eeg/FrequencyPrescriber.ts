@@ -18,6 +18,28 @@ export enum NeuralState {
   DEEP_RELAXED = 5,
 }
 
+/**
+ * Canonical resonance-score weights (Joseph's Aetheria RCT / Selah's calibration
+ * guide). A named, documented constant — NEVER a magic number and NEVER
+ * blind-edited. The score itself is logged in parallel (see resonanceScore); it
+ * does not drive the game's discrete placement, so exposing it lets the placement
+ * range be evaluated from real data before anyone touches a threshold. Weights
+ * sum to 1.0, so the score sits in [0, 1] for relative band powers + coherence.
+ */
+export const RESONANCE_WEIGHTS = { alpha: 0.3, theta: 0.25, gamma: 0.1, coherence: 0.35 } as const;
+
+/** A per-tick snapshot of the continuous placement signal (for the export). */
+export interface ResonanceReadout {
+  score: number; // pre-rescale weighted sum (RESONANCE_WEIGHTS)
+  alpha: number; // relative alpha power (component)
+  theta: number; // relative theta power
+  gamma: number; // relative gamma power
+  coherence: number; // EEG coherence (PLV) component
+  state: string; // classified NeuralState name
+  offset: number; // intra-regime offset 0..8 actually used (post grounding-clamp)
+  rawIndex: number; // instantaneous placement 0..26 (pre-hysteresis)
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
@@ -25,6 +47,24 @@ function clamp(v: number, lo: number, hi: number): number {
 export class FrequencyPrescriber {
   private lastIndex = -1;
   private stableSince = 0; // hysteresis to avoid index flicker
+  private lastReadout: ResonanceReadout | null = null; // continuous placement signal
+
+  /**
+   * The pre-rescale resonance score — the RCT's weighted sum of relative band
+   * powers + EEG coherence (RESONANCE_WEIGHTS). Logged in parallel; exposing it
+   * lets the placement range be calibrated from data (never blind-edited).
+   */
+  resonanceScore(bands: BandPowerResult, coherence: number): { score: number; alpha: number; theta: number; gamma: number; coherence: number } {
+    const w = RESONANCE_WEIGHTS;
+    const alpha = bands.alphaRel, theta = bands.thetaRel, gamma = bands.gammaRel;
+    const score = w.alpha * alpha + w.theta * theta + w.gamma * gamma + w.coherence * coherence;
+    return { score, alpha, theta, gamma, coherence };
+  }
+
+  /** The most recent continuous placement snapshot (or null before first prescribe). */
+  getLastReadout(): ResonanceReadout | null {
+    return this.lastReadout;
+  }
 
   /** Classify arousal/relaxation from the relaxation (θ/α) + focus (β/γ) indices. */
   classifyState(bands: BandPowerResult): NeuralState {
@@ -67,6 +107,11 @@ export class FrequencyPrescriber {
 
     const index = clamp(regimeBase + offset, 0, 26);
 
+    // Cache the continuous placement signal for parallel logging (the pre-rescale
+    // resonance score + the components + the discrete state/offset it resolved to).
+    const rs = this.resonanceScore(bands, coherence);
+    this.lastReadout = { ...rs, state: NeuralState[state], offset, rawIndex: index };
+
     // Hysteresis: only change the reported index after it has been stable for a
     // few calls, so the prescribed frequency doesn't jitter every tick.
     if (index === this.lastIndex) {
@@ -84,5 +129,6 @@ export class FrequencyPrescriber {
   reset(): void {
     this.lastIndex = -1;
     this.stableSince = 0;
+    this.lastReadout = null;
   }
 }

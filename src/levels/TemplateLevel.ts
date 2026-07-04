@@ -21,6 +21,7 @@ import { HarmonicBridge } from '../props/HarmonicBridge';
 import { CoherenceGate } from '../props/CoherenceGate';
 import { SacredGeometryEmitter } from '../props/SacredGeometryEmitter';
 import { FrequencyFlora } from '../props/FrequencyFlora';
+import { Portal } from '../props/Portal';
 
 const REGIME_INDEX: Record<string, 0 | 1 | 2> = { GUT: 0, HEART: 1, HEAD: 2 };
 
@@ -29,6 +30,8 @@ export class TemplateLevel extends LevelBase {
   private props: FrequencyReactiveBlock[] = [];
   private crystals: ResonanceCrystal[] = [];
   private gate!: CoherenceGate;
+  private portal!: Portal;
+  private portalUsed = false; // debounce the step-through so it fires once per approach
   private builder: EnvironmentBuilder;
   private gateAnnounced = false;
   private postPuzzleClock = 0; // time since all locks solved (gate-ceiling timer)
@@ -38,16 +41,20 @@ export class TemplateLevel extends LevelBase {
   private settleSpaceTime = 0; // continuous time settling at the gate/meditation
   private readonly breathGuideDelay = 5; // the pacer appears after this many seconds
 
-  constructor(config: LevelFrequencyConfig, ctx: LevelContext) {
+  private readonly visitSeed: number;
+
+  constructor(config: LevelFrequencyConfig, ctx: LevelContext, visitSeed?: number) {
     super(config, ctx);
     this.builder = new EnvironmentBuilder(ctx.world);
+    // A fresh seed each visit → crystals + dressing re-scatter every arrival.
+    this.visitSeed = (visitSeed ?? Math.floor(Math.random() * 0xffffffff)) >>> 0;
   }
 
   build(): void {
     const cfg = this.config;
 
-    // 1. Voxel environment.
-    this.layout = this.builder.build(cfg);
+    // 1. Voxel environment (per-visit layout from the visit seed).
+    this.layout = this.builder.build(cfg, this.visitSeed);
 
     // 2. Atmosphere (fog/sky/sun from the level config colors).
     this.ctx.world.applyAtmosphere({
@@ -106,22 +113,40 @@ export class TemplateLevel extends LevelBase {
     );
     this.addProp(bridge);
 
-    // Coherence gate guarding the meditation platform.
+    // Coherence gate guarding the meditation platform, oriented so its opening
+    // faces the (RNG-placed) meditation dais — when it dissolves you look straight
+    // through to the still centre.
     this.gate = new CoherenceGate(
       this.layout.gate.clone().add(new THREE.Vector3(0.5, 0, 0.5)),
       primary,
       cfg.coherenceThreshold,
       3,
     );
+    this.orientToward(this.gate.object, this.layout.meditationCenter);
     this.gate.onOpened = () => {
       this.ctx.audio.chime(432);
-      this.ctx.speak('The gate yields as you settle. The node remembers you.');
+      this.ctx.speak('The gate yields as you settle. The way to the still centre opens.');
+      this.portal.activate();
     };
     this.addProp(this.gate);
+
+    // Portal between the gate and the dais, facing the dais. Hidden until the gate
+    // opens; on a revisit it (and the gate) start open so a returning player walks
+    // straight through to sit. Stepping through it places you on the dais.
+    this.portal = new Portal(this.layout.portal.clone().add(new THREE.Vector3(0.5, 0, 0.5)), secondary, 1.4);
+    this.orientToward(this.portal.object, this.layout.meditationCenter);
+    this.addProp(this.portal);
 
     // Sacred geometry above the meditation platform.
     const geo = new SacredGeometryEmitter(this.layout.geometryCenter.clone(), secondary, 1.8);
     this.addProp(geo);
+
+    // Revisiting an already-restored node: open the gate + portal from the start
+    // so you can go straight to the still centre without re-solving it.
+    if (this.ctx.isRevisit()) {
+      this.gate.opened = true;
+      this.portal.activate();
+    }
 
     // Frequency flora.
     this.layout.floraSites.forEach((p, i) => {
@@ -145,6 +170,12 @@ export class TemplateLevel extends LevelBase {
   private addProp(p: FrequencyReactiveBlock): void {
     this.props.push(p);
     this.ctx.propGroup.add(p.object);
+  }
+
+  /** Rotate a prop's object so its local +z faces a grid target (e.g. the dais). */
+  private orientToward(obj: THREE.Object3D, targetGrid: THREE.Vector3): void {
+    const tx = targetGrid.x + 0.5, tz = targetGrid.z + 0.5;
+    obj.rotation.y = Math.atan2(tx - obj.position.x, tz - obj.position.z);
   }
 
   // ── Reactive hooks ──
@@ -228,6 +259,22 @@ export class TemplateLevel extends LevelBase {
       prop.update(dt, this.timeInLevel);
     }
 
+    // Step through the open portal → arrive at the still centre (the dais). Fires
+    // once per approach; leaving the portal re-arms it. A gentle placement, no
+    // startle — the same recovery motion used elsewhere.
+    if (this.portal.isActive) {
+      const pp = this.portal.object.position;
+      const near = Math.hypot(pf.x - pp.x, pf.z - pp.z) < 1.6;
+      if (near && !this.portalUsed) {
+        this.portalUsed = true;
+        const c = this.layout.meditationCenter;
+        this.ctx.player.spawnAt(c.x + 0.5, c.y, c.z + 0.5);
+        this.ctx.speak('You step through. The still centre receives you.');
+      } else if (!near) {
+        this.portalUsed = false;
+      }
+    }
+
     if (this.allPuzzlesSolved) {
       if (!this.gateAnnounced) {
         this.gateAnnounced = true;
@@ -282,5 +329,25 @@ export class TemplateLevel extends LevelBase {
   }
   get puzzleTotal(): number {
     return this.crystals.length;
+  }
+
+  /** Dev/testing: key layout positions (grid coords) + far-side state. */
+  debugPositions(): {
+    spawn: { x: number; y: number; z: number };
+    dais: { x: number; y: number; z: number };
+    gate: { x: number; y: number; z: number };
+    portal: { x: number; y: number; z: number };
+    portalActive: boolean;
+    gateOpen: boolean;
+  } {
+    const v = (p: THREE.Vector3) => ({ x: p.x, y: p.y, z: p.z });
+    return {
+      spawn: v(this.layout.spawn),
+      dais: v(this.layout.meditationCenter),
+      gate: v(this.layout.gate),
+      portal: v(this.layout.portal),
+      portalActive: this.portal?.isActive ?? false,
+      gateOpen: this.gate?.opened ?? false,
+    };
   }
 }

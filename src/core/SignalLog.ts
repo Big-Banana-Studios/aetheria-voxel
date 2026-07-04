@@ -24,6 +24,17 @@ export interface SignalRecord {
   eegCoherence: number; // EEG PLV — logged only, never gates (honest-claims rule)
   heartSettledness: number; // HRV settledness 0..1
   fusedSettledness: number; // what actually drove the world this tick
+  neuroReadiness: number; // neuro-adaptive fusion 0..1 (paces the CABI walk)
+  neuroSources: string; // which sensors the fusion used (e.g. 'hrv+eeg')
+  eegRelaxation: number | null; // baseline-relative EEG relaxation index (logged)
+  adaptiveWalk: boolean; // was this tick on the adaptive CABI walk?
+  neuroBaselineActive: boolean; // tone-free baseline capture window (audit: tones off)
+  // Continuous placement signal (RESONANCE_WEIGHTS), logged in parallel — never
+  // drives placement; exposed so the range can be calibrated from data.
+  resonanceScore: number | null; // pre-rescale weighted sum 0..1
+  resonanceState: string | null; // classified neural state
+  resonanceOffset: number | null; // intra-regime offset 0..8
+  resonanceRawIndex: number | null; // instantaneous placement 0..26 (pre-hysteresis)
   hrvRmssd: number | null; // ms
   hrvBaseline: number | null; // ms
   bpm: number;

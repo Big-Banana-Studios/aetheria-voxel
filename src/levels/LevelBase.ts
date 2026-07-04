@@ -27,6 +27,8 @@ export interface LevelContext {
   speak: (line: string) => void;
   /** Active input mode → device-correct control hints in spoken lines. */
   isTouch: () => boolean;
+  /** True if this node was already restored before (gate + portal start open). */
+  isRevisit: () => boolean;
 }
 
 export abstract class LevelBase {
@@ -49,6 +51,10 @@ export abstract class LevelBase {
   protected meditationDwell = 0; // seconds spent in the meditation space
   protected minDwellSeconds: number;
   protected maxDwellSeconds: number;
+  // Absolute whole-level ceiling: completes no matter what (puzzles, gate, or even
+  // never reaching the dais) after a very generous total time. This is the airtight
+  // "never a wall" backstop so auto-advance always eventually continues the walk.
+  protected absoluteCeilingSeconds: number;
   /** How the level completed, for honest logging: 'settled' | 'ceiling'. */
   completedBy: 'settled' | 'ceiling' | null = null;
 
@@ -62,6 +68,7 @@ export abstract class LevelBase {
     this.requiredSustainedSeconds = config.sustainedSeconds;
     this.minDwellSeconds = config.minDwellSeconds;
     this.maxDwellSeconds = config.maxDwellSeconds;
+    this.absoluteCeilingSeconds = Math.max(240, config.maxDwellSeconds + 120);
   }
 
   /** Build the voxel environment + reactive props. */
@@ -121,6 +128,13 @@ export abstract class LevelBase {
   }
 
   protected checkCompletion(): boolean {
+    // Absolute guarantee (never a wall): after a very generous total time in the
+    // level, the node settles on its own regardless of puzzles/gate/dais so the
+    // walk always continues. The intended route is still the settled path below.
+    if (this.timeInLevel >= this.absoluteCeilingSeconds) {
+      this.completedBy = 'ceiling';
+      return true;
+    }
     if (!this.allPuzzlesSolved || !this.gateOpened) return false;
     // Must dwell at least the floor so the space is actually experienced.
     if (this.meditationDwell < this.minDwellSeconds) return false;

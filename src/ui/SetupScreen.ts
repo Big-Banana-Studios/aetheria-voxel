@@ -21,6 +21,19 @@ export interface SetupCallbacks {
   finishCalibration: () => void; // capture the baseline at the end of the window
   enter: () => void; // begin the Field
   manual: () => void; // skip straight to Manual Mode
+  /** Advisory connection trust-check (aetheria-signal.js). Never blocks entry. */
+  calibrateSignal?: () => SignalGateSummary;
+}
+
+/** An advisory calibration verdict for one sensor (aetheria-signal.js calibrate()). */
+export interface SignalGateVerdict {
+  passed: boolean;
+  reasons: string[]; // human-readable issues (empty when passed)
+  fix: string | null; // the single most useful next action
+}
+export interface SignalGateSummary {
+  muse: SignalGateVerdict | null; // null = not connected / not enough data yet
+  polar: SignalGateVerdict | null;
 }
 
 const CHANNELS: (keyof ChannelQuality)[] = ['tp9', 'af7', 'af8', 'tp10'];
@@ -40,6 +53,11 @@ export interface SetupStatus {
   preset: string; // active Muse preset (for the toggle label)
   polarConnected: boolean;
   calibProgress: number;
+  // EEG stream integrity (channel-map / detection surface).
+  eegMode: string | null; // 'EEG8' | 'EEG4' | null (no EEG stream yet)
+  eegPackets: number; // EEG packets decoded; 0 ⇒ no scalp stream arriving
+  scalpMapped: boolean; // all four scalp labels present in the stream
+  deviceName: string | null; // BLE device name (e.g. 'MuseS-1234')
 }
 
 export class SetupScreen {
@@ -52,6 +70,7 @@ export class SetupScreen {
   private pairingPolar = false;
   private notice = ''; // transient message (e.g. "Muse disconnected")
   private calibElapsed = 0;
+  private gateAccum = 0; // throttle the advisory calibration check
   private cb!: SetupCallbacks;
 
   constructor(root: HTMLElement) {
@@ -231,6 +250,13 @@ export class SetupScreen {
       '<div data-row="polar">Polar H10: —</div>';
     this.panel.appendChild(status);
 
+    // Advisory connection trust-check (aetheria-signal.js). It NEVER blocks entry —
+    // it just names whether the contact looks trustworthy and the one thing to fix.
+    const gate = document.createElement('div');
+    gate.id = 'setup-gate';
+    gate.style.cssText = 'margin:0.8rem auto 0.2rem;font:0.85rem/1.5 "Segoe UI",sans-serif;max-width:340px;min-height:1.2rem;';
+    this.panel.appendChild(gate);
+
     // Optics troubleshooting: if no optical packets arrive under this preset, the
     // user can cycle to another optics-capable preset and reconnect right here.
     // (Hidden until we actually see zero optics on a connected Muse.)
@@ -270,6 +296,22 @@ export class SetupScreen {
     const skip = this.btn('Skip baseline');
     skip.onclick = () => this.gotoReady();
     this.panel.appendChild(skip);
+  }
+
+  /** Honest advisory copy from the calibration verdicts — trustworthy ✓, or the
+   *  single most useful fix. Never a block, never a score. */
+  private renderGate(sum: SignalGateSummary): string {
+    const line = (name: string, v: SignalGateVerdict | null): string => {
+      if (!v) return '';
+      if (v.passed) return `<div style="color:#5ad48a">${name} contact looks trustworthy ✓</div>`;
+      const issue = v.reasons[0] ?? 'contact looks weak';
+      const fix = v.fix ? ` <span style="opacity:0.85">— ${v.fix}</span>` : '';
+      return `<div style="color:#d4c050">${name}: ${issue}${fix}</div>`;
+    };
+    const parts = [line('Muse', sum.muse), line('Polar', sum.polar)].filter(Boolean);
+    if (!parts.length) return '<div style="opacity:0.5">Checking connection…</div>';
+    return parts.join('') +
+      '<div style="opacity:0.5;margin-top:5px;font-size:0.78rem">Advisory only — you can enter whenever you like.</div>';
   }
 
   private gotoReady(): void {
@@ -333,9 +375,21 @@ export class SetupScreen {
         const el = row(key);
         if (el) { el.textContent = text; el.style.color = color; }
       };
+      // EEG verdict, honest about WHICH failure it is (channel-map / detection
+      // surface, Task 1): no stream ≠ mismap ≠ poor contact. When it's flowing and
+      // scalp-mapped, confirm the mode (EEG8 = 8-ch Athena) so a good map is visible.
       const eegAvg = qSum / 4;
-      set('eeg', `EEG signal: ${eegAvg > 0.6 ? 'strong' : eegAvg > 0.3 ? 'weak — reseat band' : 'poor — dampen/reseat'}`,
-        eegAvg > 0.6 ? ok : eegAvg > 0.3 ? warn : bad);
+      if (!s.museConnected) {
+        set('eeg', 'EEG signal: Muse not connected', warn);
+      } else if (s.eegPackets === 0) {
+        set('eeg', 'EEG signal: connected, but no EEG stream — reseat / check preset', bad);
+      } else if (!s.scalpMapped) {
+        set('eeg', 'EEG signal: ⚠ scalp channels missing from stream (channel-map issue)', bad);
+      } else {
+        const mode = s.eegMode ? ` · ${s.eegMode} ✓` : '';
+        set('eeg', `EEG signal: ${eegAvg > 0.6 ? 'strong' : eegAvg > 0.3 ? 'weak — reseat band' : 'poor — dampen/reseat'}${mode}`,
+          eegAvg > 0.6 ? ok : eegAvg > 0.3 ? warn : bad);
+      }
 
       // The optical stream is the root of both PPG and fNIRS. Diagnose it
       // explicitly: 0 packets ⇒ optics aren't arriving at all (LED/preset/
@@ -372,6 +426,15 @@ export class SetupScreen {
         } else {
           presetBtn.style.display = 'none';
         }
+      }
+
+      // Advisory calibration verdict (throttled). Purely advisory: the Continue /
+      // Skip buttons never wait on it — it just names the one thing worth fixing.
+      this.gateAccum += dt;
+      if (this.gateAccum >= 1.5 && this.cb.calibrateSignal) {
+        this.gateAccum = 0;
+        const gateEl = this.panel.querySelector<HTMLElement>('#setup-gate');
+        if (gateEl) gateEl.innerHTML = this.renderGate(this.cb.calibrateSignal());
       }
     } else if (this.step === 'calibrate') {
       this.calibElapsed += dt;

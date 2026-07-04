@@ -115,6 +115,12 @@ export class SubBass {
     return this.state;
   }
 
+  /** Ease the grounding tone to silence — the frequency dose is delivered.
+   *  A subsequent setFrequency (the next node) revives it. */
+  mute(seconds = 3): void {
+    this.gain.gain.setTargetAtTime(0, this.ctx.currentTime, Math.max(0.05, seconds / 3));
+  }
+
   stop(): void {
     if (!this.started) return;
     try { this.osc.stop(); this.lfo.stop(); } catch { /* already stopped */ }

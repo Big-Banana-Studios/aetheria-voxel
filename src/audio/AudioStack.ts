@@ -33,6 +33,7 @@ export class AudioStack {
   private coherence = 0;
   private masterVolume = 0.6;
   private running = false;
+  private toneMuted = false; // dose delivered — the felt tone rests until the next node
 
   constructor() {
     const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
@@ -95,6 +96,8 @@ export class AudioStack {
    * @param carrierHz  the felt, octave-folded carrier (drives base/binaural/harmonics)
    */
   setFrequency(trueHz: number, carrierHz: number): void {
+    // A new prescription (the next node) revives the tone after a dose fade-out.
+    this.toneMuted = false;
     this.currentTrueHz = trueHz;
     this.currentHz = carrierHz;
     this.base.setFrequency(carrierHz);
@@ -112,13 +115,37 @@ export class AudioStack {
   }
 
   /**
+   * Ease the felt tone to silence — the frequency dose for this node has been
+   * delivered. Kept latched (`toneMuted`) so ongoing coherence updates don't
+   * revive it; the next node's setFrequency() clears the latch. Chimes/feedback
+   * still sound. Section 14.4: transitions are gentle, never abrupt.
+   */
+  fadeOutTone(seconds = 3.5): void {
+    this.toneMuted = true;
+    if (!this.running) return;
+    const tau = Math.max(0.05, seconds / 3);
+    const t = this.ctx.currentTime;
+    this.base.setAmplitude(0, tau);
+    this.binaural.setAmplitude(0, tau);
+    for (const h of this.harmonics) h.setAmplitude(0, tau);
+    this.subBass.mute(seconds);
+    // Let the room tone settle to near-silence too (a held breath of stillness).
+    this.ambientGain.gain.setTargetAtTime(0.015, t, tau);
+  }
+
+  /** Whether the felt tone is currently rested (dose delivered). */
+  get isToneMuted(): boolean {
+    return this.toneMuted;
+  }
+
+  /**
    * Coherence-reactive layer mixing (Section 7.3). Amplitudes are deliberately
    * gentle — this is a therapeutic soundscape, never loud (Section 14.4).
    */
   private applyMix(): void {
     if (!this.running) return;
     const c = this.coherence;
-    const silent = this.currentHz <= 0;
+    const silent = this.currentHz <= 0 || this.toneMuted;
 
     // L1 base swells from quiet to present.
     this.base.setAmplitude(silent ? 0 : 0.05 + 0.22 * c);

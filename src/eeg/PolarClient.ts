@@ -12,8 +12,10 @@
  * especially meaningful in the HEART regime. It is fused with the EEG/behaviour
  * settling signal by the Game (it does not drive frequency prescription).
  */
+import './aetheria-signal.js'; // side-effect: attaches window.AetheriaSignal
 import { EventBus } from './EventBus';
 import type { PolarH10 as PolarH10Type, AetheriaRRPayload } from './polar-h10';
+import type { SignalProcessor, ProvenanceResult } from './aetheria-signal';
 import { PolarH10 } from './polar-h10.js';
 
 const WINDOW_SEC = 45; // RMSSD needs ~30-45s of beats to be stable
@@ -39,6 +41,7 @@ export class PolarClient {
   private connected = false;
   private recomputeAccum = 0;
   private listeners = new Map<string, Listener[]>();
+  private processor: SignalProcessor | null = null; // R-R provenance (extract-and-disclose)
 
   constructor() {
     this.device = new PolarH10(this.bus) as unknown as PolarH10Type;
@@ -55,7 +58,10 @@ export class PolarClient {
     try {
       await this.device.connect();
       this.connected = this.device.isConnected;
-      if (this.connected) this.emit('connected');
+      if (this.connected) {
+        this.processor = window.AetheriaSignal ? window.AetheriaSignal.makeProcessor('polar_h10') : null;
+        this.emit('connected');
+      }
       return this.connected;
     } catch (err) {
       console.error('[Aetheria] Polar H10 connect failed:', err);
@@ -65,6 +71,7 @@ export class PolarClient {
 
   disconnect(): void {
     this.device.disconnect().catch(() => {});
+    this.processor = null;
     this.connected = false;
     this.emit('disconnected');
   }
@@ -88,6 +95,14 @@ export class PolarClient {
   }
   get baselineRmssd(): number | null {
     return this.baseline;
+  }
+  /** Recent R-R intervals (ms) for the calibration gate (aetheria-signal.js). */
+  getRecentRR(): number[] {
+    return [...this.rr];
+  }
+  /** Provenance snapshot for the session export (clean-vs-recovered disclosure). */
+  getProvenance(): ProvenanceResult | null {
+    return this.processor ? this.processor.finalize() : null;
   }
   get hasBaseline(): boolean {
     return this.baseline != null;
@@ -136,6 +151,9 @@ export class PolarClient {
 
   private onRR(p: AetheriaRRPayload): void {
     if (typeof p.hr_bpm === 'number' && p.hr_bpm > 0) this.bpm = p.hr_bpm;
+    // Stream every beat (incl. gaps/ectopics) through the provenance processor,
+    // which does its own honest gap-marking + capped bridging (never fabricates).
+    this.processor?.push({ rr: p.rr_ms ?? null });
     if (p.rr_ms == null) return;
     // Reject artifacts (ectopic beats / motion) before they poison RMSSD.
     if (p.rr_ms < RR_MIN_MS || p.rr_ms > RR_MAX_MS) return;

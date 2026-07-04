@@ -12,6 +12,7 @@ import { ConnectionStatus } from './ConnectionStatus';
 import { CubeMiniMap } from './CubeMiniMap';
 import { BreathingGuide } from './BreathingGuide';
 import type { FrequencyTable } from '../core/FrequencyTable';
+import type { WalkDef } from '../core/Walks';
 
 export interface HUDState {
   coherence: number;
@@ -31,6 +32,11 @@ export interface HUDState {
   unlocked: Set<number>;
   breatheGuide: boolean; // show the breathing pacer (working a lock / settling at the gate)
   usingTouch: boolean; // active input mode → device-correct control hints
+  walkName: string; // current Lo Shu walk (e.g. "Vortex", "CABI")
+  walkStep: number; // 1-based step within the walk
+  walkTotal: number; // steps in the walk
+  walkPhase?: string; // optional phase token (V/A/B/♾️/✕)
+  walkAdaptive: boolean; // CABI: paced by settling
 }
 
 export class HUD {
@@ -42,6 +48,7 @@ export class HUD {
   private subtitle: HTMLDivElement;
   private prompt: HTMLDivElement;
   private puzzleCount: HTMLDivElement;
+  private walkIndicator: HTMLDivElement;
   private banner: HTMLDivElement;
   private setupBar: HTMLDivElement;
   private subtitleTimer = 0;
@@ -69,6 +76,13 @@ export class HUD {
     this.puzzleCount.style.cssText =
       'position:fixed;top:46px;right:16px;font:12px/1 "Segoe UI",sans-serif;color:#9ad6c8;opacity:0.8;';
     root.appendChild(this.puzzleCount);
+
+    // Current walk + step (top-right, under the crystal count). Orientation only —
+    // where you are on the path, never a score.
+    this.walkIndicator = document.createElement('div');
+    this.walkIndicator.style.cssText =
+      'position:fixed;top:22px;right:16px;font:12px/1.3 "Segoe UI",sans-serif;color:#c4a8ec;opacity:0.82;text-align:right;';
+    root.appendChild(this.walkIndicator);
 
     this.banner = this.makeCenterText('', 'top:38%', '2rem', '#fff');
     this.banner.style.transform = 'translateX(-50%)';
@@ -210,6 +224,23 @@ export class HUD {
     this.banner.innerHTML = `<div>The node is restored</div><div style="font-size:1rem;opacity:0.7;margin-top:0.5rem">${levelName}</div>`;
     this.banner.style.opacity = '1';
   }
+
+  /** A walk is complete — a larger beat than a single node. Names what closed and
+   *  what opens next (or the CABI unlock, or the closed circuit if CABI itself). */
+  showWalkComplete(finished: WalkDef, next: WalkDef, unlockedCabi: boolean, lastWalk: boolean): void {
+    let sub: string;
+    if (lastWalk) {
+      sub = 'The circuit closes, and begins again. The dragon eats its tail.';
+    } else if (unlockedCabi) {
+      sub = `All four walks are whole. The full circuit opens: <b>${next.name}</b> — one hundred and ten steps, paced by your own settling.`;
+    } else {
+      sub = `Next: <b>${next.name}</b> · ${next.description}`;
+    }
+    this.banner.innerHTML =
+      `<div>${finished.name} walk complete</div>` +
+      `<div style="font-size:0.95rem;opacity:0.75;margin-top:0.6rem;max-width:30rem;line-height:1.5">${sub}</div>`;
+    this.banner.style.opacity = '1';
+  }
   hideCompletion(): void {
     this.banner.style.opacity = '0';
   }
@@ -227,6 +258,18 @@ export class HUD {
     this.breathing.update(dt, state.breatheGuide);
 
     this.puzzleCount.textContent = `Crystals woken: ${state.puzzlesSolved}/${state.puzzleTotal}`;
+
+    // Walk orientation: name · step of total (· phase token · adaptive marker).
+    if (state.walkName) {
+      const phase = state.walkPhase ? ` <span style="opacity:0.7">${state.walkPhase}</span>` : '';
+      const adaptive = state.walkAdaptive ? ' <span style="opacity:0.6">· adaptive</span>' : '';
+      this.walkIndicator.innerHTML =
+        `<span style="letter-spacing:0.06em">${state.walkName}</span>${phase}` +
+        `<span style="opacity:0.6"> · ${state.walkStep}/${state.walkTotal}</span>${adaptive}`;
+      this.walkIndicator.style.display = 'block';
+    } else {
+      this.walkIndicator.style.display = 'none';
+    }
 
     // Meditation prompt fades in near the meditation space. Device-correct: the
     // on-screen Meditate button on touch, the M key on keyboard.

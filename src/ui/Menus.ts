@@ -16,6 +16,7 @@ export interface MenuCallbacks {
   onMainMenu: () => void; // return to title from pause
   onMetrics: () => void; // open the session metrics panel
   onWelcome: () => void; // re-open the first-launch welcome / onboarding
+  onDisclaimer: () => void; // re-open the safety & honesty disclaimer
 }
 
 /** Optional tilt-to-look controls (mobile only). Wired from the Game to the
@@ -116,7 +117,9 @@ export class MenuSystem {
     settings.onclick = () => this.showSettings(() => this.showMain());
     const credits = this.btn('Credits');
     credits.onclick = () => this.showCredits(() => this.showMain());
-    this.panel.append(enter, welcome, how, settings, credits);
+    const safety = this.btn('Safety & Honesty');
+    safety.onclick = () => this.cb.onDisclaimer();
+    this.panel.append(enter, welcome, how, settings, credits, safety);
     // Offer to install as an app when the browser allows it (Android Chrome etc.).
     if (canInstall()) {
       const install = this.btn('⤓ Install app');

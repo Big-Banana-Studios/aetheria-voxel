@@ -21,6 +21,7 @@ import { AudioStack } from '../audio/AudioStack';
 import { MuseClient } from '../eeg/MuseClient';
 import { ManualMode } from '../eeg/ManualMode';
 import { PolarClient } from '../eeg/PolarClient';
+import { NeuroAdaptivePacer } from '../eeg/NeuroAdaptivePacer';
 import { EEGDebugOverlay } from '../eeg/EEGDebugOverlay';
 import type { CoherenceSource } from '../eeg/types';
 import { HUD } from '../ui/HUD';
@@ -28,15 +29,26 @@ import { buildConfig } from '../levels/LevelFrequencyConfig';
 import { TemplateLevel } from '../levels/TemplateLevel';
 import { buildParamsForLevel } from '../levels/buildParams';
 import { LevelBase } from '../levels/LevelBase';
-import { SignalLog } from './SignalLog';
+import {
+  ALL_WALKS,
+  PROGRESSION_WALK_COUNT,
+  resolveWalkIndices,
+  walkByIndex,
+  stepPhase,
+  type WalkDef,
+} from './Walks';
+import { SignalLog, type SignalRecord } from './SignalLog';
+import { RESONANCE_WEIGHTS } from '../eeg/FrequencyPrescriber';
 import { SaveSystem } from './SaveSystem';
 import { Settings, DIFFICULTY_SCALE } from './Settings';
 import { MenuSystem } from '../ui/Menus';
 import { MetricsTracker } from './MetricsTracker';
 import { MetricsPanel } from '../ui/MetricsPanel';
-import { SetupScreen } from '../ui/SetupScreen';
+import { SetupScreen, type SignalGateSummary } from '../ui/SetupScreen';
+import type { CalibrationResult } from '../eeg/aetheria-signal';
 import { TouchControls, hasTouch, hasFinePointer } from '../ui/TouchControls';
 import { Onboarding } from '../ui/Onboarding';
+import { Disclaimer } from '../ui/Disclaimer';
 import { RotatePrompt } from '../ui/RotatePrompt';
 import { TiltControls } from './TiltControls';
 
@@ -46,6 +58,11 @@ export interface GameOptions {
 }
 
 const REGIME_INDEX: Record<string, 0 | 1 | 2> = { GUT: 0, HEART: 1, HEAD: 2 };
+
+// Tone-free baseline window at the start of the adaptive CABI walk (Selah's
+// calibration guide, TASK 2): rest with the tone silent while we capture the
+// player's resting baseline, THEN begin adaptive pacing and resume the tone.
+const NEURO_BASELINE_SEC = 12;
 
 /** Reject if a promise doesn't settle in `ms` — used to keep boot from hanging
  *  on a blocked IndexedDB or a stalled fetch. */
@@ -74,6 +91,22 @@ export class Game {
   private completedLevels = new Set<number>();
   private unlockedLevels = new Set<number>();
 
+  // Lo Shu walk progression (Walks.ts). The current walk's order decides which
+  // node comes next; auto-advance follows it so no one gets stuck choosing.
+  private walkCurrent = 0; // 0..3 = the four walks, 4 = adaptive CABI
+  private walkStep = 0; // index into the current walk's step order
+  private walkOrder: number[] = []; // resolved level indices for the current walk
+  private autoAdvanceTimer: number | null = null; // pending gentle auto-advance
+
+  // Neuro-adaptive pacing for the adaptive CABI walk: fuses whatever sensors the
+  // player brings (Muse EEG/stillness + Polar HRV, individually or in tandem).
+  private neuroPacer = new NeuroAdaptivePacer();
+  private enteredAdaptive = false; // baseline is captured once on entering CABI
+  private neuroBaselineUntil = 0; // performance.now() end of the tone-free baseline
+  private neuroBaselinePrompted = false; // spoke the baseline prompt once
+  private lastNeuroReadiness = 0; // last fused readiness (for logging/debug)
+  private lastNeuroSources = ''; // which sensors contributed last tick
+
   private freqTable!: FrequencyTable;
   private muse!: MuseClient;
   private manual = new ManualMode();
@@ -100,7 +133,10 @@ export class Game {
   private metrics = new MetricsTracker();
   private metricsPanel!: MetricsPanel;
   private setup!: SetupScreen;
+  // Last advisory calibration result per sensor (stamped into the session export).
+  private lastCalibrationFull: { muse: CalibrationResult | null; polar: CalibrationResult | null } = { muse: null, polar: null };
   private onboarding!: Onboarding; // first-launch welcome (auto, skippable)
+  private disclaimer!: Disclaimer; // first-launch safety/honesty gate (must acknowledge)
   private rotatePrompt!: RotatePrompt; // mobile landscape guidance
   private tilt = new TiltControls(); // optional tilt-to-look (mobile)
   private touch?: TouchControls; // on-screen controls (created on touch-capable hw)
@@ -169,6 +205,11 @@ export class Game {
       console.warn('[Aetheria] Continuing without saved progress:', e);
       this.completedLevels = new Set();
     }
+    // Restore walk progression (Vortex → Ascent → Pillar → Ouroboros → CABI).
+    const wp = this.save.walkProgress;
+    this.walkCurrent = wp.current;
+    this.walkStep = wp.step;
+    this.resolveCurrentWalk();
     this.recomputeUnlocked();
 
     // Menus + settings + metrics panel.
@@ -178,6 +219,7 @@ export class Game {
       onMainMenu: () => this.showMainMenu(),
       onMetrics: () => this.metricsPanel.show(this.metrics),
       onWelcome: () => this.onboarding.show(),
+      onDisclaimer: () => this.disclaimer.show(),
     }, {
       museConnected: () => this.muse.isConnected,
       polarConnected: () => this.polar.isConnected,
@@ -201,6 +243,7 @@ export class Game {
     this.metricsPanel.onExport = () => this.downloadSignalLog();
     this.setup = new SetupScreen(this.opts.hud);
     this.onboarding = new Onboarding(this.opts.hud);
+    this.disclaimer = new Disclaimer(this.opts.hud);
     // Mobile landscape guidance: prompt in portrait + keep the renderer correct on
     // every rotate/resize (the canvas, breath ring, map, and pause all reflow).
     this.rotatePrompt = new RotatePrompt(this.opts.hud, () => this.resize());
@@ -262,12 +305,27 @@ export class Game {
     this.loadLevel(this.continueIndex());
   }
 
-  /** The level to resume at: the first unlocked-but-unfinished level, else GUT-1. */
+  /** The level to resume at: the node at the current step of the current walk. */
   private continueIndex(): number {
-    for (let i = 0; i < 27; i++) {
-      if (this.unlockedLevels.has(i) && !this.completedLevels.has(i)) return i;
-    }
-    return 0;
+    return this.walkNodeAt(this.walkStep);
+  }
+
+  // ── Walk progression helpers ──
+
+  private currentWalkDef(): WalkDef {
+    return walkByIndex(this.walkCurrent);
+  }
+
+  /** Resolve the current walk's {regime,pos} steps into ordered level indices. */
+  private resolveCurrentWalk(): void {
+    this.walkOrder = resolveWalkIndices(this.freqTable, this.currentWalkDef());
+  }
+
+  /** The level index at a given step of the current walk (clamped). */
+  private walkNodeAt(step: number): number {
+    if (!this.walkOrder.length) return 0;
+    const s = Math.max(0, Math.min(this.walkOrder.length - 1, step));
+    return this.walkOrder[s];
   }
 
   // ── Level loading ──
@@ -286,12 +344,36 @@ export class Game {
     config.coherenceThreshold = Math.max(0.2, Math.min(0.95, config.coherenceThreshold * scale.threshold));
     config.sustainedSeconds = Math.round(config.sustainedSeconds * scale.sustain);
 
+    // Adaptive CABI (the 110-step final walk): pace the circuit by settling.
+    // Settle well and the dose completes sooner; struggle and the node still
+    // yields via its ceiling — never a wall. Targets are shortened so the full
+    // circuit flows rather than becoming 110 long sits. This is honest "adaptive":
+    // the ORDER is the fixed CABI circuit; only the PACING follows the body.
+    const adaptiveWalk = this.currentWalkDef().adaptive;
+    if (adaptiveWalk) {
+      config.sustainedSeconds = Math.max(6, Math.round(config.sustainedSeconds * 0.55));
+      config.minDwellSeconds = Math.max(8, Math.round(config.minDwellSeconds * 0.5));
+      config.maxDwellSeconds = Math.max(40, Math.round(config.maxDwellSeconds * 0.6));
+    }
+    // Capture the neuro-adaptive baseline once, on entering the CABI walk (it
+    // then persists across its 110 nodes so the dose reads against your own rest).
+    // Per the tone-free-baseline protocol, this opens a short SILENT rest window.
+    if (adaptiveWalk && !this.enteredAdaptive) {
+      this.neuroPacer.reset();
+      this.neuroPacer.beginBaseline();
+      this.neuroBaselineUntil = performance.now() + NEURO_BASELINE_SEC * 1000;
+      this.neuroBaselinePrompted = false;
+    }
+    this.enteredAdaptive = adaptiveWalk;
+
     const regime = REGIME_INDEX[config.regime];
     this.muse.setRegime(regime);
     this.manual.setRegime(regime);
     this.hud.setRegime(config.regime);
     this.applySky(config.regime, entry.ambient_color, entry.secondary_color);
 
+    // A fresh visit seed each load → crystals + dressing re-scatter every arrival.
+    const visitSeed = Math.floor(Math.random() * 0xffffffff) >>> 0;
     const level = new TemplateLevel(config, {
       world: this.world,
       scene: this.scene,
@@ -302,9 +384,13 @@ export class Game {
       getSource: () => this.getSource(),
       speak: (line) => this.hud.speak(line),
       isTouch: () => this.usingTouch,
-    });
+      isRevisit: () => this.completedLevels.has(index),
+    }, visitSeed);
     level.onComplete = (lvl) => this.onLevelComplete(lvl);
     level.build();
+    // The tone-free baseline must be silent: level.build() starts the tone, so
+    // rest it back down until the baseline window closes (see update()).
+    if (performance.now() < this.neuroBaselineUntil) this.audio.fadeOutTone(1.5);
     this.level = level;
     this.world.remeshDirty();
     this.recomputeUnlocked();
@@ -314,18 +400,16 @@ export class Game {
   // ── Progression: completed set, unlock logic, cube navigation ──
 
   /**
-   * Unlock rule (GDD §10.1): regimes can be entered in any order, but levels
-   * complete in order WITHIN a regime. So a level is unlocked if it is the first
-   * of its regime, already completed, or its in-regime predecessor is completed.
+   * Unlock rule (walk-based). The current walk defines the path through the cube;
+   * a node is open once the walk has reached it. So every node at step ≤ the
+   * current step is open (the path walked so far, revisitable), plus the current
+   * "next" step, plus anything already completed. This guarantees the next node
+   * on the walk always lights up — the fix for GUT's last node not appearing.
    */
   private recomputeUnlocked(): void {
     const u = new Set<number>();
-    for (let i = 0; i < 27; i++) {
-      const posInRegime = i % 9;
-      if (posInRegime === 0 || this.completedLevels.has(i) || this.completedLevels.has(i - 1)) {
-        u.add(i);
-      }
-    }
+    for (let s = 0; s <= this.walkStep && s < this.walkOrder.length; s++) u.add(this.walkOrder[s]);
+    for (const i of this.completedLevels) u.add(i);
     if (this.level) u.add(this.level.levelIndex);
     this.unlockedLevels = u;
   }
@@ -341,18 +425,90 @@ export class Game {
     });
     this.completedLevels = this.save.completedSet;
     this.completedLevels.add(lvl.levelIndex);
+
+    // The frequency dose for this node is delivered → let the felt tone rest.
+    // The next node's setFrequency() revives it. (User: "tones cut off when the
+    // dose is met, baked into auto-advance so no one gets stuck.")
+    this.audio.fadeOutTone();
+
+    // Advance the walk only if this was the current step (not a replay of an
+    // earlier, already-walked node the player travelled back to).
+    const wasCurrentStep = lvl.levelIndex === this.walkNodeAt(this.walkStep);
+    if (wasCurrentStep) this.walkStep++;
+    const walkFinished = wasCurrentStep && this.walkStep >= this.walkOrder.length;
+
     this.recomputeUnlocked();
     this.hud.bloomNode(lvl.levelIndex);
+
+    if (walkFinished) {
+      this.advanceWalk();
+      return;
+    }
+
+    void this.save.saveWalkProgress(this.walkCurrent, this.walkStep);
     this.hud.showCompletion(lvl.config.levelName);
-    // Release the cursor and open the cube so the player can choose where next.
+    // Release the cursor and open the cube so the player can SEE where they are —
+    // then the path continues on its own (auto-advance) unless they choose a node.
     this.state = 'complete';
     this.hud.showCubeHero();
     this.player.unlock();
+    this.scheduleAutoAdvance();
+  }
+
+  /** A walk is finished — celebrate, roll to the next walk (or unlock CABI), and
+   *  keep the journey moving. Completing all four walks unlocks adaptive CABI;
+   *  CABI itself closes and re-opens (the dragon eats its tail). */
+  private advanceWalk(): void {
+    const finished = this.currentWalkDef();
+    const wasProgression = this.walkCurrent < PROGRESSION_WALK_COUNT;
+    const lastWalk = this.walkCurrent >= ALL_WALKS.length - 1;
+
+    // The four walks advance in sequence; CABI (the last) loops closed.
+    this.walkCurrent = lastWalk ? this.walkCurrent : this.walkCurrent + 1;
+    this.walkStep = 0;
+    this.resolveCurrentWalk();
+    this.recomputeUnlocked();
+    void this.save.saveWalkProgress(this.walkCurrent, this.walkStep);
+
+    const next = this.currentWalkDef();
+    const unlockedCabi = wasProgression && this.walkCurrent >= PROGRESSION_WALK_COUNT;
+    this.hud.showWalkComplete(finished, next, unlockedCabi, lastWalk);
+
+    this.state = 'complete';
+    this.hud.showCubeHero();
+    this.player.unlock();
+    this.scheduleAutoAdvance();
+  }
+
+  /** Gently continue the walk on its own after a node completes, so no one gets
+   *  stuck on the cube. The player can override by choosing a node (which cancels
+   *  this) or just rest — opening/closing the map does not force the jump. */
+  private scheduleAutoAdvance(): void {
+    this.cancelAutoAdvance();
+    const nextIdx = this.walkNodeAt(this.walkStep);
+    const hint = this.usingTouch
+      ? 'Rest here. The path continues on its own — or tap a node on the cube.'
+      : 'Rest here. The path continues on its own — or click a node on the cube.';
+    setTimeout(() => this.hud.speak(hint), 2600);
+    this.autoAdvanceTimer = window.setTimeout(() => {
+      this.autoAdvanceTimer = null;
+      // Only auto-advance if the player is still resting at the completion screen.
+      if (this.state !== 'complete') return;
+      this.travelToNode(nextIdx);
+    }, 9000);
+  }
+
+  private cancelAutoAdvance(): void {
+    if (this.autoAdvanceTimer != null) {
+      clearTimeout(this.autoAdvanceTimer);
+      this.autoAdvanceTimer = null;
+    }
   }
 
   /** Dev/testing hook: jump straight to a level, bypassing the unlock gate.
    *  Call from the console: aetheria.gotoLevel(10). */
   gotoLevel(index: number): void {
+    this.cancelAutoAdvance();
     this.menus.hide();
     this.hud.hideCompletion();
     this.hud.hideCubeHero();
@@ -362,8 +518,49 @@ export class Game {
     this.requestPlay();
   }
 
+  /** Dev/testing hook: force-complete the current level to exercise the dose
+   *  fade-out + walk auto-advance. Console: aetheria.devComplete(). */
+  devComplete(): void {
+    if (this.level) this.onLevelComplete(this.level);
+  }
+
+  /** Dev/testing hook: read the current walk state. Console: aetheria.walkState(). */
+  walkState(): { walk: string; step: number; total: number; adaptive: boolean; nextNode: number; neuroReadiness: number; neuroSources: string } {
+    return {
+      walk: this.currentWalkDef().name,
+      step: this.walkStep,
+      total: this.walkOrder.length,
+      adaptive: this.currentWalkDef().adaptive,
+      nextNode: this.walkNodeAt(this.walkStep),
+      neuroReadiness: this.lastNeuroReadiness,
+      neuroSources: this.lastNeuroSources,
+    };
+  }
+
+  /** Dev/testing hook: current level's far-side layout (dais/gate/portal). */
+  levelLayout(): unknown {
+    return (this.level as TemplateLevel | null)?.debugPositions() ?? null;
+  }
+
+  /** Dev/testing hook: jump the walk pointer (e.g. straight to CABI) and load its
+   *  current node. Console: aetheria.devSetWalk(4, 0). */
+  devSetWalk(current: number, step = 0): void {
+    this.cancelAutoAdvance();
+    this.walkCurrent = Math.max(0, Math.min(ALL_WALKS.length - 1, current));
+    this.walkStep = step;
+    this.resolveCurrentWalk();
+    this.recomputeUnlocked();
+    void this.save.saveWalkProgress(this.walkCurrent, this.walkStep);
+    this.gotoLevel(this.walkNodeAt(this.walkStep));
+  }
+
   private travelToNode(index: number): void {
     if (!this.unlockedLevels.has(index)) return;
+    this.cancelAutoAdvance();
+    // No walk-pointer resync here: unlocked nodes are only those at or before the
+    // current step, so the player can't skip ahead, and finishing a revisited
+    // earlier node doesn't advance the walk (the `wasCurrentStep` check handles
+    // that). Resyncing would be ambiguous for walks that revisit SOURCE.
     this.hud.hideCompletion();
     this.hud.hideCubeHero();
     this.loadLevel(index);
@@ -497,9 +694,11 @@ export class Game {
     if (this.hud.cubeIsHero) this.hud.hideCubeHero();
     if (this.player?.isLocked) this.player.unlock();
     this.menus.showMain();
-    // First exposure to the welcome must be automatic (shown once, remembered).
-    // It sits above the title; closing it leaves the player on the menu.
-    this.onboarding.maybeShow();
+    // First launch: the safety/honesty disclaimer must be acknowledged BEFORE the
+    // welcome (it sits above both, z60). Once accepted it chains into the welcome.
+    // Returning players skip straight to the (already-seen) welcome check.
+    const shownDisclaimer = this.disclaimer.maybeShow(() => this.onboarding.maybeShow());
+    if (!shownDisclaimer) this.onboarding.maybeShow();
   }
 
   /** From the title's "Enter the Field": guided sensor setup + calibration. */
@@ -520,7 +719,34 @@ export class Game {
       finishCalibration: () => this.polar.finalizeBaseline(),
       enter: () => this.beginPlay(),
       manual: () => this.startManual(),
+      calibrateSignal: () => this.calibrateSignal(),
     });
+  }
+
+  /** Advisory connection trust-check (aetheria-signal.js calibrate()). Runs on a
+   *  short live window per connected sensor; judges only, never alters the stream
+   *  and never blocks entry. Full results are retained for the session export. */
+  private calibrateSignal(): SignalGateSummary {
+    const api = window.AetheriaSignal;
+    const out: SignalGateSummary = { muse: null, polar: null };
+    if (!api) return out;
+    if (this.usingMuse && this.muse.isConnected) {
+      const samples = this.muse.getRawWindow();
+      if (samples) {
+        const r = api.calibrate('muse', { samples, fs: 256, channels: ['TP9', 'AF7', 'AF8', 'TP10'] });
+        this.lastCalibrationFull.muse = r;
+        out.muse = { passed: r.passed, reasons: r.reasons, fix: r.fixes[0] ?? null };
+      }
+    }
+    if (this.polar.isConnected) {
+      const rr = this.polar.getRecentRR();
+      if (rr.length >= 8) {
+        const r = api.calibrate('polar_h10', { rr });
+        this.lastCalibrationFull.polar = r;
+        out.polar = { passed: r.passed, reasons: r.reasons, fix: r.fixes[0] ?? null };
+      }
+    }
+    return out;
   }
 
   private pause(): void {
@@ -610,13 +836,60 @@ export class Game {
     this.playStateListeners.push(cb);
   }
 
-  /** Export the parallel signal log as JSON (research corpus). */
+  /** Export the parallel signal log as JSON (research corpus), stamped with the
+   *  advisory calibration verdicts + the extract-and-disclose provenance (how much
+   *  of each stream was clean vs recovered) from aetheria-signal.js. */
   exportSignalLog(): string {
-    return this.signalLog.exportJSON();
+    const base = JSON.parse(this.signalLog.exportJSON()) as Record<string, unknown>;
+    base.calibration = this.lastCalibrationFull;
+    base.provenance = {
+      muse: this.muse.getProvenance(),
+      polar: this.polar.getProvenance(),
+    };
+    base.resonance = this.summarizeResonance((base.records as SignalRecord[]) ?? []);
+    return JSON.stringify(base, null, 2);
+  }
+
+  /** Session summary of the continuous placement signal: the min/median/max range
+   *  of the pre-rescale resonance score + a placement histogram, so whether the
+   *  placement is compressed into a band is answerable from data — never blind-
+   *  edited. (Selah's calibration guide, TASK 3.) */
+  private summarizeResonance(records: SignalRecord[]): unknown {
+    const scores = records.map((r) => r.resonanceScore).filter((v): v is number => v != null);
+    const stat = (arr: number[]) => {
+      if (!arr.length) return null;
+      const s = [...arr].sort((a, b) => a - b);
+      return {
+        min: s[0],
+        median: s[Math.floor(s.length / 2)],
+        mean: s.reduce((a, b) => a + b, 0) / s.length,
+        max: s[s.length - 1],
+        count: s.length,
+      };
+    };
+    const placement: Record<number, number> = {};
+    const states: Record<string, number> = {};
+    for (const r of records) {
+      if (r.resonanceRawIndex != null) placement[r.resonanceRawIndex] = (placement[r.resonanceRawIndex] ?? 0) + 1;
+      if (r.resonanceState) states[r.resonanceState] = (states[r.resonanceState] ?? 0) + 1;
+    }
+    return {
+      weights: RESONANCE_WEIGHTS,
+      note: 'Pre-rescale weighted sum of relative alpha/theta/gamma + EEG coherence. Logged in parallel; it does NOT drive the game\'s placement. Exposed so the placement range can be calibrated from real data — do not blind-edit the weights or the placement thresholds.',
+      score: stat(scores),
+      placementHistogram: placement,
+      stateHistogram: states,
+    };
   }
   /** Download the signal log (call from the console: aetheria.downloadSignalLog()). */
   downloadSignalLog(): void {
-    this.signalLog.download();
+    const blob = new Blob([this.exportSignalLog()], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'aetheria-signals.json';
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   // ── Loop ──
@@ -660,6 +933,10 @@ export class Game {
         preset: dg.preset,
         polarConnected: this.polar.isConnected,
         calibProgress: this.muse.calibrationProgress,
+        eegMode: dg.eegMode,
+        eegPackets: dg.eegPackets,
+        scalpMapped: dg.scalpMapped,
+        deviceName: dg.deviceName,
       });
     }
 
@@ -702,13 +979,56 @@ export class Game {
       settleSource = 'behaviour';
     }
 
+    // Neuro-adaptive fusion — always computed (logged in parallel), and used to
+    // GATE the adaptive CABI walk. Fuses whatever sensors are live (Muse EEG +
+    // stillness + Polar HRV), individually or in tandem, relative to baseline.
+    const nm = this.muse.getMetrics();
+    const neuro = this.neuroPacer.update(dt, {
+      polarConnected: this.polar.isConnected,
+      polarHasBaseline: this.polar.hasBaseline,
+      hrvSettledness: this.polar.getSettledness(),
+      museConnected: this.usingMuse && this.muse.isConnected,
+      museHasStillness: this.muse.hasStillness,
+      stillness: this.muse.getStillness(),
+      bands: this.usingMuse && this.muse.isConnected
+        ? { alphaRel: nm.alphaRel, thetaRel: nm.thetaRel, betaRel: nm.betaRel, gammaRel: nm.gammaRel }
+        : null,
+      eegQuality: (nm.quality.af7 + nm.quality.af8) / 2,
+      hbo: nm.hbo,
+      behaviourSettle: this.manual.getCoherenceScore(),
+    });
+    this.lastNeuroReadiness = neuro.readiness;
+    this.lastNeuroSources = neuro.sources.join('+');
+    // During the adaptive CABI walk, the fused readiness paces the dose; every
+    // other walk keeps the standard body-settle gate untouched.
+    const gate = this.currentWalkDef().adaptive ? neuro.readiness : coherence;
+
+    // Tone-free baseline window (start of CABI): rest in silence while the pacer
+    // captures the resting baseline, then resume the tone and begin adaptive
+    // pacing. The dose does not progress during the silent rest.
+    const baselineActive = performance.now() < this.neuroBaselineUntil;
+    if (baselineActive) {
+      if (!this.audio.isToneMuted) this.audio.fadeOutTone(1.5);
+      if (!this.neuroBaselinePrompted) {
+        this.neuroBaselinePrompted = true;
+        this.hud.speak('The circuit attunes to you. Rest a moment in silence — then it moves as you settle.');
+      }
+    } else if (this.neuroPacer.isCapturingBaseline) {
+      // Window just closed → freeze the tone-free baseline and bring the tone back.
+      this.neuroPacer.endBaseline();
+      this.level?.onFrequencyPrescribed(this.lastFreqIndex);
+      this.hud.speak('Attuned. The circuit now moves with your own settling.');
+    }
+    const gateForLevel = baselineActive ? 0 : gate;
+
     // Drive the level (which drives world shader, audio, and every prop).
     if (this.level) {
       if (freqIndex !== this.lastFreqIndex) {
-        this.level.onFrequencyPrescribed(freqIndex);
+        // Hold the tone silent through the baseline window; revive it on close.
+        if (!baselineActive) this.level.onFrequencyPrescribed(freqIndex);
         this.lastFreqIndex = freqIndex;
       }
-      this.level.update(dt, freqIndex, coherence, bands);
+      this.level.update(dt, freqIndex, gateForLevel, bands);
     }
 
     // Bridges and gates may have edited voxels — re-mesh anything dirty.
@@ -740,6 +1060,7 @@ export class Game {
         battery: mm.battery,
       });
 
+      const res = this.usingMuse ? this.muse.getResonance() : null;
       this.signalLog.push({
         t: Math.round(this.level.timeInLevel * 1000),
         source: this.usingMuse && this.muse.isConnected ? 'muse' : 'manual',
@@ -754,6 +1075,15 @@ export class Game {
         eegCoherence: this.usingMuse ? this.muse.getCoherenceScore() : 0,
         heartSettledness: this.polar.getSettledness(),
         fusedSettledness: coherence,
+        neuroReadiness: neuro.readiness,
+        neuroSources: neuro.sources.join('+'),
+        eegRelaxation: neuro.eegRelaxation,
+        adaptiveWalk: this.currentWalkDef().adaptive,
+        neuroBaselineActive: baselineActive,
+        resonanceScore: res?.score ?? null,
+        resonanceState: res?.state ?? null,
+        resonanceOffset: res?.offset ?? null,
+        resonanceRawIndex: res?.rawIndex ?? null,
         hrvRmssd: this.polar.getRmssd(),
         hrvBaseline: this.polar.baselineRmssd,
         bpm: this.polar.heartRate,
@@ -769,7 +1099,7 @@ export class Game {
     // HUD.
     const lvl = this.level as TemplateLevel | null;
     this.hud.update(dt, {
-      coherence,
+      coherence: gateForLevel,
       meditationProgress: this.level?.meditationProgress ?? 0,
       freqIndex,
       connected: source.isConnected,
@@ -786,16 +1116,26 @@ export class Game {
       unlocked: this.unlockedLevels,
       breatheGuide: lvl?.breathingGuideActive ?? false,
       usingTouch: this.usingTouch,
+      walkName: this.currentWalkDef().name,
+      walkStep: Math.min(this.walkStep + 1, this.walkOrder.length),
+      walkTotal: this.walkOrder.length,
+      walkPhase: stepPhase(this.currentWalkDef(), this.walkStep),
+      walkAdaptive: this.currentWalkDef().adaptive,
     });
 
     // Live tuning HUD (backtick) — the actual gate components for device tuning.
     const mm = this.muse.getMetrics();
+    const ddg = this.muse.getDiagnostics();
+    const dres = this.usingMuse ? this.muse.getResonance() : null;
     const as = this.audio.getAudioState();
     const dEntry = this.freqTable.get(freqIndex);
     this.debug.update({
       source: this.usingMuse && this.muse.isConnected ? 'muse' : 'manual',
       settleSource,
-      settle: coherence,
+      settle: gateForLevel,
+      neuroReadiness: this.lastNeuroReadiness,
+      neuroSources: this.lastNeuroSources,
+      adaptiveWalk: this.currentWalkDef().adaptive,
       threshold: this.level?.coherenceThreshold ?? 0,
       sustain: this.level?.settleSustainSeconds ?? 0,
       sustainReq: this.level?.requiredSustainSeconds ?? 0,
@@ -811,6 +1151,9 @@ export class Game {
       rmssdBaseline: this.polar.baselineRmssd,
       hrvSettle: this.polar.getSettledness(),
       museConnected: this.muse.isConnected,
+      eegMode: ddg.eegMode,
+      scalpMapped: ddg.scalpMapped,
+      eegPackets: ddg.eegPackets,
       quality: mm.quality,
       plv: mm.plvCoherence,
       stillness: mm.stillness,
@@ -820,6 +1163,10 @@ export class Game {
       hbo: mm.hbo,
       hbr: mm.hbr,
       battery: mm.battery,
+      resonanceScore: dres?.score ?? null,
+      resonanceState: dres?.state ?? null,
+      resonanceOffset: dres?.offset ?? null,
+      resonanceRawIndex: dres?.rawIndex ?? null,
       freqIndex,
       regimePos: `${dEntry.regime}-${dEntry.regime_position}`,
       trueHz: as.trueHz || dEntry.frequency_hz,

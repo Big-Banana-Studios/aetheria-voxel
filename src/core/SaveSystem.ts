@@ -33,6 +33,14 @@ export interface AetheriaSave {
   coherenceHistory: SessionCoherenceRecord[];
   // calibration kept minimal until the EEG setup flow needs more.
   calibration: { capturedAt: number | null };
+  // Lo Shu walk progression: which walk (0..3 = the four walks, 4 = adaptive CABI)
+  // and how far along its step order. Drives auto-advance + node unlock.
+  walk: WalkProgress;
+}
+
+export interface WalkProgress {
+  current: number; // 0..4 (0..3 sequential walks, 4 = adaptive CABI)
+  step: number; // index into the current walk's step order
 }
 
 const DB_NAME = 'aetheria-voxel';
@@ -56,6 +64,7 @@ function emptySave(): AetheriaSave {
     lastPlayed: 0,
     coherenceHistory: [],
     calibration: { capturedAt: null },
+    walk: { current: 0, step: 0 },
   };
 }
 
@@ -141,6 +150,17 @@ export class SaveSystem {
     d.meditationMinutes += stats.meditationMinutes;
     d.completedBy = stats.completedBy;
     if (!wasComplete) this.save.levelsCompleted++;
+    await this.flush();
+  }
+
+  /** Current walk progression (defaults to Vortex/step 0 for legacy saves). */
+  get walkProgress(): WalkProgress {
+    return this.save.walk ?? { current: 0, step: 0 };
+  }
+
+  /** Persist walk progression after an auto-advance or a walk completion. */
+  async saveWalkProgress(current: number, step: number): Promise<void> {
+    this.save.walk = { current, step };
     await this.flush();
   }
 

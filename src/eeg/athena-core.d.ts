@@ -54,6 +54,8 @@ export declare class AthenaDevice {
   get status(): string;
   get battery(): number | null;
   get deviceName(): string | null;
+  get firmware(): string;
+  get eegMode(): string | null; // 'EEG8' | 'EEG4' | null (the live EEG stream mode)
   get ppg(): AthenaPPG | null;
   get fnirs(): AthenaFNIRS | null;
   get bandPowers(): Record<string, number> | null;
