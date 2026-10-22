@@ -2,7 +2,7 @@
   "name": "Aetheria: Resonance of the Spheres",
   "short_name": "Aetheria",
   "description": "A browser-native, EEG/HRV-reactive contemplative voxel journey through 27 frequency realms. Made for veterans and anyone who needs a calm place.",
-  "id": "./",
+  "id": "/aetheria-voxel/",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
