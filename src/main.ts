@@ -57,13 +57,16 @@ setTimeout(() => {
   loading.onclick = async () => {
     loading.textContent = 'Resetting…';
     try {
+      // Only this app's worker and caches: the other Big Banana Studios apps share this origin.
+      const scope = new URL(import.meta.env.BASE_URL || './', location.href).href;
       if ('serviceWorker' in navigator) {
         const regs = await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map((r) => r.unregister()));
+        await Promise.all(regs.filter((r) => r.scope.startsWith(scope)).map((r) => r.unregister()));
       }
       if ('caches' in window) {
         const keys = await caches.keys();
-        await Promise.all(keys.map((k) => caches.delete(k)));
+        const ours = (k: string) => k.startsWith('aetheria-voxel-') || /^aetheria-(\d|dev$)/.test(k);
+        await Promise.all(keys.filter(ours).map((k) => caches.delete(k)));
       }
     } catch {
       /* best effort */

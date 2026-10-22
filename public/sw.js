@@ -12,7 +12,12 @@
  * new release activates a fresh cache and old ones are pruned.
  */
 const VERSION = new URL(self.location).searchParams.get('v') || 'dev';
-const CACHE = 'aetheria-' + VERSION;
+// Every Big Banana Studios web app shares one origin (big-banana-studios.github.io), and caches are
+// per origin, so this app's caches carry their own prefix and it only ever deletes its own.
+// Older releases used 'aetheria-<version>'; those are cleaned up too. Aetheria Reader's
+// 'aetheria-shell-…', 'aetheria-library' and 'aetheria-runtime-…' caches are left alone.
+const CACHE = 'aetheria-voxel-' + VERSION;
+const OURS = (k) => k.startsWith('aetheria-voxel-') || /^aetheria-(\d|dev$)/.test(k);
 const INDEX = './index.html';
 
 self.addEventListener('install', (event) => {
@@ -38,7 +43,7 @@ self.addEventListener('activate', (event) => {
     (async () => {
       const keys = await caches.keys();
       await Promise.all(
-        keys.filter((k) => k.startsWith('aetheria-') && k !== CACHE).map((k) => caches.delete(k)),
+        keys.filter((k) => OURS(k) && k !== CACHE).map((k) => caches.delete(k)),
       );
       await self.clients.claim();
     })(),
@@ -74,7 +79,7 @@ self.addEventListener('fetch', (event) => {
   // populate the cache on first fetch so the next load works offline.
   event.respondWith(
     (async () => {
-      const cached = await caches.match(req);
+      const cached = await (await caches.open(CACHE)).match(req);
       if (cached) return cached;
       try {
         const fresh = await fetch(req);
